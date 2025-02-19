@@ -34,7 +34,9 @@ services:
       DB_NAME: gpt_db
       DB_USER: gpt_user
       DB_PASSWORD: gpt_password
-      TOKEN: your_telegram_bot_token
+    volumes:
+      - ./secrets/telegram_token:/run/secrets/telegram_token:ro
+      - ./secrets/gpt_api_url:/run/secrets/gpt_api_url:ro
     networks:
       - backend
 
@@ -45,6 +47,8 @@ services:
     environment:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
+    volumes:
+      - ./secrets/gpt_api_key:/run/secrets/gpt_api_key:ro
     ports:
       - "9001:9001"
     networks:
