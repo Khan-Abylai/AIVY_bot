@@ -7,7 +7,7 @@ ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tzdata locales \
+    tzdata locales netcat-openbsd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -15,7 +15,9 @@ RUN pip3 install --no-cache-dir --upgrade pip
 
 RUN pip3 install --no-cache-dir \
     "python-telegram-bot[all]" \
-    requests
+    requests \
+    asyncpg-lite \
+    nest_asyncio
 
 ADD src/ /opt/api/
 WORKDIR /opt/api/

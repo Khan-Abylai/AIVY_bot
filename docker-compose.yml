@@ -1,33 +1,54 @@
+version: '3.8'
+
 networks:
   backend:
+    external: true
+    name: aivy_bot_backend
+
 services:
+  postgres_db:
+    image: postgres:14
+    container_name: gpt_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: gpt_db
+      POSTGRES_USER: gpt_user
+      POSTGRES_PASSWORD: gpt_password
+    ports:
+      - "5432:5432"
+    networks:
+      - backend
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  telegram_bot:
+    build: ./telegram
+    container_name: bot
+    restart: always
+    depends_on:
+      - postgres_db
+    environment:
+      DB_HOST: postgres_db
+      DB_PORT: 5432
+      DB_NAME: gpt_db
+      DB_USER: gpt_user
+      DB_PASSWORD: gpt_password
+      TOKEN: your_telegram_bot_token
+    networks:
+      - backend
+
   api_gpt:
-    hostname: gpt_api
+    build: ./api_gpt
     container_name: gpt_api
-    build: api_gpt/
+    restart: always
     environment:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
-    restart: always
     ports:
       - "9001:9001"
-    logging:
-      options:
-        max-size: 50m
     networks:
       - backend
-  telegram:
-    hostname: bot
-    container_name: bot
-    build: telegram/
-    environment:
-      - LANG=C.UTF-8
-      - LC_ALL=C.UTF-8
-      - PYTHONUNBUFFERED=1
-    restart: always
-    ipc: host
-    logging:
-      options:
-        max-size: 50m
-    networks:
-      - backend
+
+volumes:
+  postgres_data:
