@@ -1,33 +1,16 @@
 networks:
   backend:
 services:
-  api:
-    hostname: llm_api
-    container_name: llm_api
-    build: api/
+  api_gpt:
+    hostname: gpt_api
+    container_name: gpt_api
+    build: api_gpt/
     environment:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
     restart: always
     ports:
       - "9001:9001"
-    logging:
-      options:
-        max-size: 50m
-    networks:
-      - backend
-  api_gpt:
-    hostname: gpt_api
-    container_name: gpt_api
-    build: api_gpt/   # путь к Dockerfile нового сервиса
-    environment:
-      - LANG=C.UTF-8
-      - LC_ALL=C.UTF-8
-      - HTTPS_PROXY=159.146.103.200:3128
-      - HTTP_PROXY=159.146.103.200:3128
-    restart: always
-    ports:
-      - "9002:9002"  # при необходимости измените порт, чтобы избежать конфликта
     logging:
       options:
         max-size: 50m
