@@ -8,14 +8,14 @@ GPT_API_URL = os.getenv("GPT_API_URL", "")
 
 # Проверка загруженных переменных
 if not TOKEN:
-    print("⚠️ TELEGRAM_TOKEN не найден в переменных окружения.")
+    print("TELEGRAM_TOKEN не найден в переменных окружения.")
 else:
-    print("✅ TELEGRAM_TOKEN успешно загружен.")
+    print("TELEGRAM_TOKEN успешно загружен.")
 
 if not GPT_API_URL:
-    print("⚠️ GPT_API_URL не найден в переменных окружения.")
+    print("GPT_API_URL не найден в переменных окружения.")
 else:
-    print("✅ GPT_API_URL успешно загружен.")
+    print("GPT_API_URL успешно загружен.")
 
 # PostgreSQL конфигурация
 DB_HOST = os.getenv("DB_HOST", "localhost")
