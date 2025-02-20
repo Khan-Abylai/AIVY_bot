@@ -1,4 +1,3 @@
--- Создание таблицы для истории чатов
 CREATE TABLE IF NOT EXISTS chat_history (
     id SERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL,
