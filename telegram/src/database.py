@@ -29,49 +29,103 @@ class Database:
             await self.pool.close()
             logging.info("Подключение к PostgreSQL закрыто")
 
+    async def check_user_exists(self, user_id: int) -> bool:
+        """Проверяет, существует ли пользователь в таблице USER."""
+        if not self.pool:
+            logging.error("Нет подключения к базе данных")
+            return False
+        try:
+            async with self.pool.acquire() as connection:
+                result = await connection.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM \"USER\" WHERE user_id = $1)", user_id
+                )
+                return result
+        except Exception as e:
+            logging.error(f"Ошибка при проверке пользователя: {e}")
+            return False
+
+    async def register_user(self, user_id: int):
+        """Регистрирует нового пользователя в таблице USER."""
+        if not self.pool:
+            logging.error("Нет подключения к базе данных")
+            return
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(
+                    "INSERT INTO \"USER\" (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", user_id
+                )
+                logging.info(f"Пользователь {user_id} зарегистрирован.")
+        except Exception as e:
+            logging.error(f"Ошибка при регистрации пользователя: {e}")
+
     async def save_message(self, user_id: int, message: str, gpt_response: str):
         """Сохраняет сообщение пользователя и ответ GPT в базу данных."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
-
         try:
             async with self.pool.acquire() as connection:
                 await connection.execute(
                     """
-                    INSERT INTO chat_history (user_id, message, gpt_response, timestamp)
-                    VALUES ($1, $2, $3, NOW())
+                    INSERT INTO "Message" (user_id, dialogue_id, role, response)
+                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'user', $2)
                     """,
-                    user_id, message, gpt_response
+                    user_id, message
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO "Message" (user_id, dialogue_id, role, response)
+                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'assistant', $3)
+                    """,
+                    user_id, gpt_response
                 )
                 logging.info(f"Сообщение от пользователя {user_id} сохранено.")
-        except (asyncpg.exceptions.ConnectionDoesNotExistError, asyncpg.exceptions.ConnectionFailureError) as e:
-            logging.error(f"Потеряно соединение с базой данных: {e}")
-            logging.info("Попытка переподключения...")
-            await self.connect()
-            await self.save_message(user_id, message, gpt_response)
         except Exception as e:
             logging.error(f"Ошибка при сохранении сообщения: {e}")
 
     async def get_recent_messages(self, user_id: int, limit: int = 10):
         """Получает последние сообщения пользователя из базы данных."""
         if not self.pool:
-            logging.error("Нет подключения к базе данных")
+            logging.error("Нет подключения к базы данных")
             return []
-
         try:
             async with self.pool.acquire() as connection:
                 rows = await connection.fetch(
                     """
-                    SELECT message, gpt_response, timestamp 
-                    FROM chat_history 
+                    SELECT response, role, response_time 
+                    FROM "Message" 
                     WHERE user_id = $1 
-                    ORDER BY timestamp DESC 
+                    ORDER BY response_time DESC 
                     LIMIT $2
                     """,
                     user_id, limit
                 )
-                return rows
+                return [{'message': row['response'] if row['role'] == 'user' else None,
+                         'gpt_response': row['response'] if row['role'] == 'assistant' else None,
+                         'timestamp': row['response_time']} for row in rows]
         except Exception as e:
             logging.error(f"Ошибка при получении сообщений: {e}")
             return []
+
+    # Заготовки для сохранения анкет (раскомментируй и адаптируй при необходимости)
+    # async def save_user_profile(self, user_id: int, age: str, sex: str, job: str, city: str, reason: str, goal: str):
+    #     async with self.pool.acquire() as connection:
+    #         await connection.execute(
+    #             """
+    #             INSERT INTO "USER_Profile" (user_id, age, sex, job, city, goal)
+    #             VALUES ($1, $2::int, $3, $4, $5, $6)
+    #             ON CONFLICT (user_id) DO UPDATE SET age = $2::int, sex = $3, job = $4, city = $5, goal = $6
+    #             """,
+    #             user_id, age, sex, job, city, goal
+    #         )
+
+    # async def save_user_feedback(self, user_id: int, rating: str, useful: str, missing: str, interface: str, improvements: str):
+    #     async with self.pool.acquire() as connection:
+    #         await connection.execute(
+    #             """
+    #             INSERT INTO "USER_Feedback" (user_id, interaction_rating, useful_functions, missing_features, interface_convenience, technical_improvements)
+    #             VALUES ($1, $2::int, $3, $4, $5, $6)
+    #             ON CONFLICT (user_id) DO UPDATE SET interaction_rating = $2::int, useful_functions = $3, missing_features = $4, interface_convenience = $5, technical_improvements = $6
+    #             """,
+    #             user_id, rating, useful, missing, interface, improvements
+    #         )

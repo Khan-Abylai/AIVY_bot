@@ -2,8 +2,6 @@ version: '3.8'
 
 networks:
   backend:
-    external: true
-    name: aivy_bot_backend
 
 services:
   postgres_db:

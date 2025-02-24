@@ -1,11 +1,12 @@
 import logging
 import nest_asyncio
 import asyncio
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-import requests
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 from database import Database
 import config
+from offer_and_survey import start_offer, check_consent, process_age, process_sex, process_job, process_city, process_reason, process_goal, cancel, WAITING_FOR_CONSENT, AGE, SEX, JOB, CITY, REASON, GOAL
+from feedback_survey import start_feedback_survey, process_rating, process_useful, process_missing, process_interface, process_improvements, cancel as feedback_cancel, RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
+from handlers import help_command, show_history, process_message, unknown_command
 
 nest_asyncio.apply()
 
@@ -16,58 +17,45 @@ logging.basicConfig(
 
 db = Database()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я AIVY. Отправь мне сообщение!")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = "Отправь сообщение, давай поговорим."
-    await update.message.reply_text(help_text)
-
-async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    messages = await db.get_recent_messages(user_id)
-
-    if not messages:
-        await update.message.reply_text("История пуста.")
-        return
-
-    history_text = "📜 Последние сообщения:\n\n"
-    for msg in messages:
-        history_text += f"👤 {msg['message']}\n🤖 {msg['gpt_response']}\n🕒 {msg['timestamp']}\n\n"
-
-    await update.message.reply_text(history_text)
-
-async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    user_id = update.message.from_user.id
-
-    try:
-        response = requests.post(config.GPT_API_URL, data={"prompt": user_text})
-        response.raise_for_status()
-
-        gpt_answer = response.json().get("response", "Ошибка: пустой ответ от API")
-        await update.message.reply_text(gpt_answer)
-
-        # Сохраняем в базу данных
-        await db.save_message(user_id, user_text, gpt_answer)
-
-    except Exception as e:
-        logging.error(f"Ошибка при обработке сообщения: {e}")
-        await update.message.reply_text("Произошла ошибка. Попробуй снова позже.")
-
-async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Извините, я не знаю такой команды.")
-
 async def main():
-
     await db.connect()
 
     app = Application.builder().token(config.TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
+    # Обработчик оферты и анкетирования
+    offer_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", lambda update, context: start_offer(update, context, db))],
+        states={
+            WAITING_FOR_CONSENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_consent)],
+            AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_age)],
+            SEX: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_sex)],
+            JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_job)],
+            CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_city)],
+            REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_reason)],
+            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_goal)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # Обработчик финального опроса
+    feedback_survey_handler = ConversationHandler(
+        entry_points=[CommandHandler("feedback", start_feedback_survey)],
+        states={
+            RATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_rating)],
+            USEFUL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_useful)],
+            MISSING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_missing)],
+            INTERFACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_interface)],
+            IMPROVEMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_improvements)],
+        },
+        fallbacks=[CommandHandler("cancel", feedback_cancel)],
+    )
+
+    # Регистрация обработчиков
+    app.add_handler(offer_handler)
+    app.add_handler(feedback_survey_handler)
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("history", show_history))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
+    app.add_handler(CommandHandler("history", lambda update, context: show_history(update, context, db)))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     logging.info("Бот запущен...")
