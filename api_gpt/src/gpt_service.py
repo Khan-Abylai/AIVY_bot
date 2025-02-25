@@ -18,7 +18,7 @@ class GPTService:
         Принимает строку prompt, формирует список сообщений для однократного запроса и
         возвращает ответ модели.
         """
-        # Формируем сообщения с единственным сообщением от пользователя
+
         messages = [{"role": "user", "content": prompt}]
         try:
             response = self.client.chat.completions.create(
@@ -28,7 +28,7 @@ class GPTService:
                 presence_penalty=0.8,
                 frequency_penalty=0.5
             )
-            # Извлекаем текст ответа
+
             return response.choices[0].message.content
         except Exception as e:
             logging.error(f"Ошибка при генерации ответа: {e}")

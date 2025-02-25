@@ -1,111 +1,65 @@
-import os
 import logging
-import requests
-import telegram
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-
+import nest_asyncio
+import asyncio
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
+from database import Database
 import config
+from offer_and_survey import start_offer, check_consent, process_age, process_sex, process_job, process_city, process_reason, process_goal, cancel, WAITING_FOR_CONSENT, AGE, SEX, JOB, CITY, REASON, GOAL
+from feedback_survey import start_feedback_survey, process_rating, process_useful, process_missing, process_interface, process_improvements, cancel as feedback_cancel, RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
+from handlers import help_command, show_history, process_message, unknown_command
 
-# Словарь для хранения выбранного режима для каждого чата (chat_id: mode)
-chat_modes = {}
+nest_asyncio.apply()
 
-def start(update, context):
-    chat_id = update.effective_chat.id
-    # По умолчанию устанавливаем режим "llama" (стандартный API)
-    chat_modes[chat_id] = "llama"
-    context.bot.send_message(
-        chat_id=chat_id,
-        text=("Привет! Я бот на базе Llama.\n\n"
-              "По умолчанию я использую стандартный API (Llama).\n"
-              "Чтобы переключиться на GPT API, отправьте команду /gpt.\n"
-              "Чтобы переключиться обратно на Llama API, отправьте команду /llama.")
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+db = Database()
+
+async def main():
+    await db.connect()
+
+    app = Application.builder().token(config.TOKEN).build()
+
+    # Обработчик оферты и анкетирования
+    offer_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", lambda update, context: start_offer(update, context, db))],
+        states={
+            WAITING_FOR_CONSENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_consent)],
+            AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_age)],
+            SEX: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_sex)],
+            JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_job)],
+            CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_city)],
+            REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_reason)],
+            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_goal)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-def help_command(update, context):
-    help_msg = (
-        "*Как пользоваться:*\n"
-        "- Отправьте любое сообщение — оно будет обработано выбранным API.\n"
-        "- Для переключения режима:\n"
-        "   • /gpt — использовать GPT API\n"
-        "   • /llama — использовать стандартный API (Llama)\n"
-    )
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        parse_mode=telegram.ParseMode.MARKDOWN,
-        text=help_msg
-    )
-
-def set_gpt_mode(update, context):
-    chat_id = update.effective_chat.id
-    chat_modes[chat_id] = "gpt"
-    context.bot.send_message(
-        chat_id=chat_id,
-        text="Режим переключён: теперь используются запросы к GPT API."
+    # Обработчик финального опроса
+    feedback_survey_handler = ConversationHandler(
+        entry_points=[CommandHandler("feedback", start_feedback_survey)],
+        states={
+            RATING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_rating)],
+            USEFUL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_useful)],
+            MISSING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_missing)],
+            INTERFACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_interface)],
+            IMPROVEMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_improvements)],
+        },
+        fallbacks=[CommandHandler("cancel", feedback_cancel)],
     )
 
-def set_llama_mode(update, context):
-    chat_id = update.effective_chat.id
-    chat_modes[chat_id] = "llama"
-    context.bot.send_message(
-        chat_id=chat_id,
-        text="Режим переключён: теперь используются запросы к Llama API."
-    )
+    # Регистрация обработчиков
+    app.add_handler(offer_handler)
+    app.add_handler(feedback_survey_handler)
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("history", lambda update, context: show_history(update, context, db)))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-def echo_text(update, context):
-    chat_id = update.effective_chat.id
-    user_text = update.message.text
-
-    # Определяем режим для данного чата, если не задан – по умолчанию "llama"
-    mode = chat_modes.get(chat_id, "llama")
-    
-    # Выбираем URL в зависимости от выбранного режима
-    if mode == "gpt":
-        api_url = config.GPT_API_URL
-    else:
-        api_url = config.LLAMA_API_URL
-
-    try:
-        # Отправляем запрос к выбранному API
-        resp = requests.post(api_url, data={"prompt": user_text})
-        if resp.status_code == 200:
-            data = resp.json()
-            answer = data.get("response", "")
-            context.bot.send_message(chat_id=chat_id, text=answer)
-        else:
-            context.bot.send_message(
-                chat_id=chat_id,
-                text="Ошибка при запросе к API."
-            )
-    except Exception as e:
-        logging.error(e)
-        context.bot.send_message(
-            chat_id=chat_id,
-            text="Произошла ошибка при запросе к API."
-        )
-
-def unknown(update, context):
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="Извините, я не знаю такой команды."
-    )
-
-def main():
-    updater = Updater(config.TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
-
-    # Обработчики команд для старта и помощи
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    # Обработчики команд для переключения режима
-    dispatcher.add_handler(CommandHandler("gpt", set_gpt_mode))
-    dispatcher.add_handler(CommandHandler("llama", set_llama_mode))
-    # Обработка неизвестных команд
-    dispatcher.add_handler(MessageHandler(Filters.command, unknown))
-    # Обработка обычных текстовых сообщений
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, echo_text))
-
-    updater.start_polling()
-    updater.idle()
+    logging.info("Бот запущен...")
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
