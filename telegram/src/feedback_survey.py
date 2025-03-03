@@ -41,14 +41,10 @@ async def process_improvements(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.message.from_user.id
     context.user_data['improvements'] = update.message.text
 
-    await db.save_user_feedback(
-        user_id,
-        context.user_data['rating'],
-        context.user_data['useful'],
-        context.user_data['missing'],
-        context.user_data['interface'],
-        context.user_data['improvements']
-    )
+    # Здесь можно добавить запись в USER_Feedback
+    # await db.save_user_feedback(user_id, context.user_data['rating'], context.user_data['useful'],
+    #                             context.user_data['missing'], context.user_data['interface'],
+    #                             context.user_data['improvements'])
 
     await update.message.reply_text("Спасибо за обратную связь! Мы ценим ваше мнение.")
     return ConversationHandler.END
