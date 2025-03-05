@@ -7,6 +7,7 @@ class Database:
         self.pool = None
 
     async def connect(self):
+        """Устанавливает подключение к базе данных."""
         try:
             self.pool = await asyncpg.create_pool(
                 host=DB_HOST,
@@ -23,11 +24,13 @@ class Database:
             logging.error(f"Параметры подключения -> Хост: {DB_HOST}, Порт: {DB_PORT}, БД: {DB_NAME}, Пользователь: {DB_USER}")
 
     async def close(self):
+        """Закрывает пул подключений."""
         if self.pool:
             await self.pool.close()
             logging.info("Подключение к PostgreSQL закрыто")
 
     async def check_user_exists(self, user_id: int) -> bool:
+        """Проверяет, существует ли пользователь в таблице USER."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return False
@@ -42,6 +45,7 @@ class Database:
             return False
 
     async def register_user(self, user_id: int):
+        """Регистрирует нового пользователя в таблице USER."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
@@ -55,6 +59,7 @@ class Database:
             logging.error(f"Ошибка при регистрации пользователя: {e}")
 
     async def save_message(self, user_id: int, message: str, gpt_response: str):
+        """Сохраняет сообщение пользователя и ответ GPT в базу данных (старый метод)."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
@@ -63,14 +68,14 @@ class Database:
                 await connection.execute(
                     """
                     INSERT INTO "Message" (user_id, dialogue_id, role, response)
-                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'user', $2)
+                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'user', $2::text)
                     """,
                     user_id, message
                 )
                 await connection.execute(
                     """
                     INSERT INTO "Message" (user_id, dialogue_id, role, response)
-                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'assistant', $3)
+                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'assistant', $2::text)
                     """,
                     user_id, gpt_response
                 )
@@ -79,6 +84,7 @@ class Database:
             logging.error(f"Ошибка при сохранении сообщения: {e}")
 
     async def get_recent_messages(self, user_id: int, limit: int = 10):
+        """Получает последние сообщения пользователя из базы данных."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return []
@@ -95,13 +101,14 @@ class Database:
                     user_id, limit
                 )
                 return [{'message': row['response'] if row['role'] == 'user' else None,
-                        'gpt_response': row['response'] if row['role'] == 'assistant' else None,
-                        'timestamp': row['response_time']} for row in rows]
+                         'gpt_response': row['response'] if row['role'] == 'assistant' else None,
+                         'timestamp': row['response_time']} for row in rows]
         except Exception as e:
             logging.error(f"Ошибка при получении сообщений: {e}")
             return []
 
-    async def save_user_profile(self, user_id: int, age: str, sex: str, job: str, city: str, reason: str, goal: str):
+    async def save_user_profile(self, user_id: int, f_name: str, l_name: str, age: str, sex: str, job: str, city: str, reason: str, goal: str):
+        """Сохраняет или обновляет профиль пользователя, включая имя и фамилию."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
@@ -109,11 +116,18 @@ class Database:
             async with self.pool.acquire() as connection:
                 await connection.execute(
                     """
-                    INSERT INTO "USER_Profile" (user_id, age, sex, job, city, goal)
-                    VALUES ($1, $2::int, $3, $4, $5, $6)
-                    ON CONFLICT (user_id) DO UPDATE SET age = $2::int, sex = $3, job = $4, city = $5, goal = $6
+                    INSERT INTO "USER_Profile" (user_id, f_name, l_name, age, sex, job, city, goal, solution)
+                    VALUES ($1, $2, $3, $4::int, $5, $6, $7, $8, '')
+                    ON CONFLICT (user_id) DO UPDATE SET 
+                        f_name = $2,
+                        l_name = $3,
+                        age = $4::int,
+                        sex = $5,
+                        job = $6,
+                        city = $7,
+                        goal = $8
                     """,
-                    user_id, int(age), sex, job, city, goal
+                    user_id, f_name, l_name, int(age), sex, job, city, goal
                 )
             logging.info(f"Профиль пользователя {user_id} сохранён.")
         except ValueError as ve:
@@ -122,6 +136,7 @@ class Database:
             logging.error(f"Ошибка при сохранении профиля пользователя: {e}")
 
     async def save_user_feedback(self, user_id: int, rating: str, useful: str, missing: str, interface: str, improvements: str):
+        """Сохраняет или обновляет обратную связь пользователя."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
@@ -138,3 +153,58 @@ class Database:
             logging.info(f"Обратная связь пользователя {user_id} сохранена.")
         except Exception as e:
             logging.error(f"Ошибка при сохранении обратной связи: {e}")
+
+    # Новые методы для работы с диалогами и сообщениями
+
+    async def create_conversation(self) -> int:
+        """Создаёт новый диалог в таблице Conversation и возвращает его dialogue_id."""
+        if not self.pool:
+            logging.error("Нет подключения к базе данных")
+            return 0
+        try:
+            async with self.pool.acquire() as connection:
+                dialogue_id = await connection.fetchval(
+                    """
+                    INSERT INTO "Conversation" (short_summary, summary)
+                    VALUES ('', '')
+                    RETURNING dialogue_id
+                    """
+                )
+                logging.info(f"Создан новый диалог: {dialogue_id}")
+                return dialogue_id
+        except Exception as e:
+            logging.error(f"Ошибка при создании диалога: {e}")
+            return 0
+
+    async def save_message_with_dialogue(self, user_id: int, dialogue_id: int, role: str, message: str):
+        """Сохраняет сообщение с привязкой к определённому диалогу (Conversation)."""
+        if not self.pool:
+            logging.error("Нет подключения к базе данных")
+            return
+        try:
+            async with self.pool.acquire() as connection:
+                await connection.execute(
+                    """
+                    INSERT INTO "Message" (user_id, dialogue_id, role, response)
+                    VALUES ($1, $2, $3, $4::text)
+                    """,
+                    user_id, dialogue_id, role, message
+                )
+                logging.info(f"Сообщение ({role}) для пользователя {user_id} сохранено в диалоге {dialogue_id}.")
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении сообщения с диалогом: {e}")
+
+    async def get_user_profile(self, user_id: int):
+        """Получает профиль пользователя из таблицы USER_Profile."""
+        if not self.pool:
+            logging.error("Нет подключения к базе данных")
+            return None
+        try:
+            async with self.pool.acquire() as connection:
+                row = await connection.fetchrow(
+                    'SELECT * FROM "USER_Profile" WHERE user_id = $1', user_id
+                )
+                return row
+        except Exception as e:
+            logging.error(f"Ошибка при получении профиля пользователя: {e}")
+            return None

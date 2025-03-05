@@ -4,9 +4,17 @@ import asyncio
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 from database import Database
 import config
-from offer_and_survey import start_offer, check_consent, process_age, process_sex, process_job, process_city, process_reason, process_goal, cancel, WAITING_FOR_CONSENT, AGE, SEX, JOB, CITY, REASON, GOAL
-from feedback_survey import start_feedback_survey, process_rating, process_useful, process_missing, process_interface, process_improvements, cancel as feedback_cancel, RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
-from handlers import help_command, show_history, process_message, unknown_command
+from offer_and_survey import (
+    start_offer, check_consent, process_first_name, process_last_name,
+    process_age, process_sex, process_job, process_city, process_reason, process_goal, cancel,
+    WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, JOB, CITY, REASON, GOAL
+)
+from feedback_survey import (
+    start_feedback_survey, process_rating, process_useful, process_missing,
+    process_interface, process_improvements, cancel as feedback_cancel,
+    RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
+)
+from handlers import help_command, show_history, process_message, unknown_command, my_profile
 
 nest_asyncio.apply()
 
@@ -22,22 +30,22 @@ async def main():
 
     app = Application.builder().token(config.TOKEN).build()
 
-    # Обработчик оферты и анкетирования
     offer_handler = ConversationHandler(
         entry_points=[CommandHandler("start", lambda update, context: start_offer(update, context, db))],
         states={
             WAITING_FOR_CONSENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_consent)],
+            FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_first_name)],
+            LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_last_name)],
             AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_age)],
             SEX: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_sex)],
             JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_job)],
             CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_city)],
             REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_reason)],
-            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_goal)],
+            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_goal(update, context, db))],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # Обработчик финального опроса
     feedback_survey_handler = ConversationHandler(
         entry_points=[CommandHandler("feedback", start_feedback_survey)],
         states={
@@ -50,11 +58,11 @@ async def main():
         fallbacks=[CommandHandler("cancel", feedback_cancel)],
     )
 
-    # Регистрация обработчиков
     app.add_handler(offer_handler)
     app.add_handler(feedback_survey_handler)
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("history", lambda update, context: show_history(update, context, db)))
+    app.add_handler(CommandHandler("myprofile", lambda update, context: my_profile(update, context, db)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
