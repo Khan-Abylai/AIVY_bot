@@ -31,10 +31,9 @@ CREATE TABLE IF NOT EXISTS "USER_Feedback" (
         REFERENCES "USER"(user_id) ON DELETE CASCADE
 );
 
--- Создание таблицы Conversation
+-- Создание таблицы Conversation (удалён столбец short_summary)
 CREATE TABLE IF NOT EXISTS "Conversation" (
     dialogue_id BIGSERIAL PRIMARY KEY,
-    short_summary TEXT,
     summary TEXT
 );
 
@@ -91,10 +90,10 @@ VALUES
 ON CONFLICT (user_id) DO NOTHING;
 
 -- Вставка тестовых диалогов (Conversation)
-INSERT INTO "Conversation" (dialogue_id, short_summary, summary)
+INSERT INTO "Conversation" (dialogue_id, summary)
 VALUES
-    (1, 'Короткое описание беседы', 'Подробное описание диалога'),
-    (2, 'Вторая беседа', 'Более развернутое описание второй беседы')
+    (1, 'Подробное описание диалога'),
+    (2, 'Более развернутое описание второй беседы')
 ON CONFLICT DO NOTHING;
 
 -- Вставка тестовых сообщений (Message)
