@@ -20,12 +20,24 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
 
+  qdrant:
+    image: qdrant/qdrant
+    container_name: qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - backend
+
   telegram_bot:
     build: ./telegram
     container_name: bot
     restart: always
     depends_on:
       - postgres_db
+      - qdrant
+      - api_gpt    # Бот дождется готовности сервиса api_gpt
     environment:
       DB_HOST: postgres_db
       DB_PORT: 5432
@@ -43,8 +55,9 @@ services:
     container_name: gpt_api
     restart: always
     environment:
-      - LANG=C.UTF-8
-      - LC_ALL=C.UTF-8
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      # GPT_API_KEY укажите, если нужно
     volumes:
       - ./secrets/gpt_api_key:/run/secrets/gpt_api_key:ro
     ports:

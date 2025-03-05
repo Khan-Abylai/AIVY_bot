@@ -17,17 +17,13 @@ from feedback_survey import (
 from handlers import help_command, show_history, process_message, unknown_command, my_profile
 
 nest_asyncio.apply()
-
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 db = Database()
 
 async def main():
+    logging.info("Initializing Telegram bot...")
     await db.connect()
-
     app = Application.builder().token(config.TOKEN).build()
 
     offer_handler = ConversationHandler(
@@ -66,7 +62,8 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-    logging.info("Бот запущен...")
+    logging.info("Telegram bot is running...")
+
     await app.run_polling()
 
 if __name__ == "__main__":

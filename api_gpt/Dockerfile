@@ -2,8 +2,6 @@ FROM python:3.10-slim
 
 ENV TZ=Asia/Almaty
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# Локаль
 ENV LC_ALL=C.UTF-8
 ENV LANG=C.UTF-8
 ENV LANGUAGE=C.UTF-8
@@ -21,9 +19,13 @@ RUN pip install --no-cache-dir \
     uvicorn \
     python-multipart \
     requests \
-    openai
+    openai==0.28.0 \
+    sentence-transformers \
+    qdrant-client
 
-ADD src/ /opt/api/
+COPY src/ /opt/api/
+
 WORKDIR /opt/api/
+ENV PYTHONPATH="/opt/api/"
 
 ENTRYPOINT ["sh", "entrypoint.sh"]
