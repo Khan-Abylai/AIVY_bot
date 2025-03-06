@@ -1,4 +1,5 @@
 import asyncpg
+import asyncio
 import logging
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
@@ -8,20 +9,27 @@ class Database:
 
     async def connect(self):
         """Устанавливает подключение к базе данных."""
-        try:
-            self.pool = await asyncpg.create_pool(
-                host=DB_HOST,
-                port=DB_PORT,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                database=DB_NAME,
-                min_size=1,
-                max_size=5
-            )
-            logging.info(f"Успешное подключение к PostgreSQL на {DB_HOST}:{DB_PORT}, БД: {DB_NAME}")
-        except Exception as e:
-            logging.error(f"Ошибка подключения к PostgreSQL: {e}")
-            logging.error(f"Параметры подключения -> Хост: {DB_HOST}, Порт: {DB_PORT}, БД: {DB_NAME}, Пользователь: {DB_USER}")
+        max_retries = 5
+        retry_delay = 5  # секунды
+        for attempt in range(max_retries):
+            try:
+                self.pool = await asyncpg.create_pool(
+                    host=DB_HOST,
+                    port=DB_PORT,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    database=DB_NAME,
+                    min_size=1,
+                    max_size=5
+                )
+                logging.info(f"Успешное подключение к PostgreSQL на {DB_HOST}:{DB_PORT}, БД: {DB_NAME}")
+                return
+            except Exception as e:
+                logging.error(f"Ошибка подключения к PostgreSQL: {e}")
+                logging.error(f"Параметры подключения -> Хост: {DB_HOST}, Порт: {DB_PORT}, БД: {DB_NAME}, Пользователь: {DB_USER}")
+                logging.error(f"Попытка {attempt + 1}/{max_retries} подключения к PostgreSQL не удалась: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
 
     async def close(self):
         """Закрывает пул подключений."""
@@ -58,8 +66,8 @@ class Database:
         except Exception as e:
             logging.error(f"Ошибка при регистрации пользователя: {e}")
 
-    async def save_message(self, user_id: int, message: str, gpt_response: str):
-        """Сохраняет сообщение пользователя и ответ GPT в базу данных (старый метод)."""
+    async def save_message(self, user_id: int, message: str, gpt_response: str, dialogue_id: int):
+        """Сохраняет сообщение пользователя и ответ GPT в базу данных с указанным dialogue_id."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
@@ -67,21 +75,21 @@ class Database:
             async with self.pool.acquire() as connection:
                 await connection.execute(
                     """
-                    INSERT INTO "Message" (user_id, dialogue_id, role, response)
-                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'user', $2::text)
+                    INSERT INTO "Message" (user_id, dialogue_id, role, response, emotion)
+                    VALUES ($1, $2, 'user', $3::text, 'neutral')
                     """,
-                    user_id, message
+                    user_id, dialogue_id, message
                 )
                 await connection.execute(
                     """
-                    INSERT INTO "Message" (user_id, dialogue_id, role, response)
-                    VALUES ($1, (SELECT COALESCE(MAX(dialogue_id), 1) FROM "Conversation"), 'assistant', $2::text)
+                    INSERT INTO "Message" (user_id, dialogue_id, role, response, emotion)
+                    VALUES ($1, $2, 'assistant', $3::text, 'positive')
                     """,
-                    user_id, gpt_response
+                    user_id, dialogue_id, gpt_response
                 )
-                logging.info(f"Сообщение от пользователя {user_id} сохранено.")
+                logging.info(f"Сообщение от {user_id} сохранено в диалоге {dialogue_id}")
         except Exception as e:
-            logging.error(f"Ошибка при сохранении сообщения: {e}")
+            logging.error(f"Ошибка при сохранении сообщения: {e}", exc_info=True)
 
     async def get_recent_messages(self, user_id: int, limit: int = 10):
         """Получает последние сообщения пользователя из базы данных."""
@@ -107,7 +115,7 @@ class Database:
             logging.error(f"Ошибка при получении сообщений: {e}")
             return []
 
-    async def save_user_profile(self, user_id: int, f_name: str, l_name: str, age: str, sex: str, job: str, city: str, reason: str, goal: str):
+    async def save_user_profile(self, user_id: int, f_name: str, l_name: str, age: str, sex: str, job: str, city: str, goal: str, solution: str):
         """Сохраняет или обновляет профиль пользователя, включая имя и фамилию."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
@@ -117,7 +125,7 @@ class Database:
                 await connection.execute(
                     """
                     INSERT INTO "USER_Profile" (user_id, f_name, l_name, age, sex, job, city, goal, solution)
-                    VALUES ($1, $2, $3, $4::int, $5, $6, $7, $8, '')
+                    VALUES ($1, $2, $3, $4::int, $5, $6, $7, $8, $9)
                     ON CONFLICT (user_id) DO UPDATE SET 
                         f_name = $2,
                         l_name = $3,
@@ -125,9 +133,10 @@ class Database:
                         sex = $5,
                         job = $6,
                         city = $7,
-                        goal = $8
+                        goal = $8,
+                        solution = $9
                     """,
-                    user_id, f_name, l_name, int(age), sex, job, city, goal
+                    user_id, f_name, l_name, int(age), sex, job, city, goal, solution
                 )
             logging.info(f"Профиль пользователя {user_id} сохранён.")
         except ValueError as ve:
@@ -165,8 +174,8 @@ class Database:
             async with self.pool.acquire() as connection:
                 dialogue_id = await connection.fetchval(
                     """
-                    INSERT INTO "Conversation" (short_summary, summary)
-                    VALUES ('', '')
+                    INSERT INTO "Conversation" (summary)
+                    VALUES ('')
                     RETURNING dialogue_id
                     """
                 )

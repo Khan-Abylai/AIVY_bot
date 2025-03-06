@@ -37,7 +37,7 @@ async def process_interface(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return IMPROVEMENTS
 
 
-async def process_improvements(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def process_improvements(update: Update, context: ContextTypes.DEFAULT_TYPE, db) -> int:
     user_id = update.message.from_user.id
     context.user_data['improvements'] = update.message.text
 

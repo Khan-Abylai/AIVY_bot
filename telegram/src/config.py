@@ -16,4 +16,4 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", 5432))
 DB_NAME = os.getenv("DB_NAME", "gpt_db")
 DB_USER = os.getenv("DB_USER", "gpt_user")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "gpt_password")  # Значение по умолчанию для теста
+DB_PASSWORD = os.getenv("DB_PASSWORD", "gpt_password")

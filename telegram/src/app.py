@@ -6,8 +6,8 @@ from database import Database
 import config
 from offer_and_survey import (
     start_offer, check_consent, process_first_name, process_last_name,
-    process_age, process_sex, process_job, process_city, process_reason, process_goal, cancel,
-    WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, JOB, CITY, REASON, GOAL
+    process_age, process_sex, process_job, process_city, process_goal, process_solution, cancel,
+    WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, JOB, CITY, GOAL, SOLUTION
 )
 from feedback_survey import (
     start_feedback_survey, process_rating, process_useful, process_missing,
@@ -36,8 +36,8 @@ async def main():
             SEX: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_sex)],
             JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_job)],
             CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_city)],
-            REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_reason)],
-            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_goal(update, context, db))],
+            GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_goal)],
+            SOLUTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_solution(update, context, db))],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -49,7 +49,7 @@ async def main():
             USEFUL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_useful)],
             MISSING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_missing)],
             INTERFACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_interface)],
-            IMPROVEMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_improvements)],
+            IMPROVEMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_improvements(update, context, db))],
         },
         fallbacks=[CommandHandler("cancel", feedback_cancel)],
     )

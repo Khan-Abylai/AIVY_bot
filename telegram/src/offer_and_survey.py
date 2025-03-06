@@ -1,6 +1,7 @@
 import re
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
+
 
 OFFER_MESSAGE = (
     "Добро пожаловать в Aivy Life!\n"
@@ -8,11 +9,24 @@ OFFER_MESSAGE = (
     "Ваши сообщения используются исключительно для персонализации рекомендаций и не передаются третьим лицам.\n"
     "Подробнее о конфиденциальности – [ссылка на политику](https://example.com/privacy.pdf).\n"
     "Используя AI-чат, вы соглашаетесь с нашей политикой.\n\n"
-    "Напишите \"Согласен\", чтобы продолжить."
+    "Напишите \"Согласен\" или нажмите на кнопку, чтобы продолжить."
+)
+
+# Клавиатура с кнопкой "Начать"
+START_KEYBOARD = ReplyKeyboardMarkup(
+    [[KeyboardButton("/start")]],
+    resize_keyboard=True,
+    one_time_keyboard=True   # Если нужно, чтобы кнопка появлялась один раз
+)
+
+AGREE_KEYBOARD = ReplyKeyboardMarkup(
+    [[KeyboardButton("Согласен")]],
+    resize_keyboard=True,
+    one_time_keyboard=True   # Если нужно, чтобы кнопка появлялась один раз
 )
 
 # Состояния анкеты
-WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, JOB, CITY, REASON, GOAL = range(9)
+WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, JOB, CITY, GOAL, SOLUTION = range(9)
 
 async def start_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, db) -> int:
     user_id = update.effective_user.id
@@ -21,7 +35,11 @@ async def start_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, db) ->
 
     if not user_exists:
         await db.register_user(user_id)
-        await update.message.reply_text(OFFER_MESSAGE)
+        await update.message.reply_text(
+            OFFER_MESSAGE,
+            reply_markup=AGREE_KEYBOARD,
+            parse_mode='Markdown'  # Для корректного отображения ссылки
+        )
         return WAITING_FOR_CONSENT
     elif not survey_completed:
         await update.message.reply_text("Введите ваше имя:")
@@ -31,11 +49,11 @@ async def start_offer(update: Update, context: ContextTypes.DEFAULT_TYPE, db) ->
         return ConversationHandler.END
 
 async def check_consent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message.text.lower() == "согласен":
+    if update.message.text.lower() == "согласен" or "согласна":
         await update.message.reply_text("Введите ваше имя:")
         return FIRST_NAME
     else:
-        await update.message.reply_text("Пожалуйста, напишите 'Согласен', чтобы продолжить.")
+        await update.message.reply_text("Пожалуйста, напишите 'Согласен', чтобы продолжить, или нажмите на кнопку.", reply_markup=AGREE_KEYBOARD)
         return WAITING_FOR_CONSENT
 
 async def process_first_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -79,16 +97,16 @@ async def process_job(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def process_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['city'] = update.message.text.strip()
     await update.message.reply_text("Что побудило вас обратиться к AIvy? (Тревога, стресс, выгорание, одиночество, поиск себя, другое)")
-    return REASON
-
-async def process_reason(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data['reason'] = update.message.text.strip()
-    await update.message.reply_text("Какие задачи вы хотите решить с помощью AIvy? (Снять стресс, лучше понимать свои эмоции, найти мотивацию, другое)")
     return GOAL
 
-async def process_goal(update: Update, context: ContextTypes.DEFAULT_TYPE, db) -> int:
-    user_id = update.effective_user.id
+async def process_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['goal'] = update.message.text.strip()
+    await update.message.reply_text("Какие задачи вы хотите решить с помощью AIvy? (Снять стресс, лучше понимать свои эмоции, найти мотивацию, другое)")
+    return SOLUTION
+
+async def process_solution(update: Update, context: ContextTypes.DEFAULT_TYPE, db) -> int:
+    user_id = update.effective_user.id
+    context.user_data['solution'] = update.message.text.strip()
 
     # Сохраняем профиль пользователя (обязательные поля: f_name и l_name)
     await db.save_user_profile(
@@ -99,8 +117,8 @@ async def process_goal(update: Update, context: ContextTypes.DEFAULT_TYPE, db) -
         context.user_data['sex'],
         context.user_data.get('job', ''),
         context.user_data.get('city', ''),
-        context.user_data['reason'],
-        context.user_data['goal']
+        context.user_data['goal'],
+        context.user_data['solution']
     )
 
     context.user_data['survey_completed'] = True
@@ -109,5 +127,5 @@ async def process_goal(update: Update, context: ContextTypes.DEFAULT_TYPE, db) -
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Функция отмены анкеты."""
-    await update.message.reply_text("Процесс прерван. Напишите /start, чтобы начать заново.")
+    await update.message.reply_text("Процесс прерван. Напишите /start, или нажмите на кнопку, чтобы начать заново.", reply_markup=START_KEYBOARD)
     return ConversationHandler.END
