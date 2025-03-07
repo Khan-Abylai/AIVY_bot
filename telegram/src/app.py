@@ -1,6 +1,7 @@
 import logging
 import nest_asyncio
 import asyncio
+import aiohttp
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 from database import Database
 import config
@@ -14,15 +15,38 @@ from feedback_survey import (
     process_interface, process_improvements, cancel as feedback_cancel,
     RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
 )
-from handlers import help_command, show_history, process_message, unknown_command, my_profile
+from handlers import help_command, show_history, unknown_command, my_profile
 
 nest_asyncio.apply()
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 db = Database()
 
+async def call_gpt_api(prompt: str) -> str:
+    url = config.GPT_API_URL  # e.g. "http://api_gpt:9001/api/generate"
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(url, json={"prompt": prompt}) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return data.get("response", "Нет ответа")
+        except Exception as e:
+            logging.error(f"Error calling GPT API: {e}")
+            return "Извините, произошла ошибка. Попробуйте снова позже."
+
+async def process_message_handler(update, context):
+    user_id = update.message.chat_id
+    text = update.message.text.strip()
+    logging.info(f"Received message from {user_id}: {text}")
+    response_text = await call_gpt_api(text)
+    await update.message.reply_text(response_text)
+
+async def reset_chat(update, context):
+    user_id = update.message.chat_id
+    await update.message.reply_text("История диалога очищена.")
+
 async def main():
-    logging.info("Initializing Telegram bot...")
+    logging.info("Starting Telegram bot...")
     await db.connect()
     app = Application.builder().token(config.TOKEN).build()
 
@@ -37,9 +61,9 @@ async def main():
             JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_job)],
             CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_city)],
             GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_goal)],
-            SOLUTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_solution(update, context, db))],
+            SOLUTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_solution(update, context, db))]
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[CommandHandler("cancel", cancel)]
     )
 
     feedback_survey_handler = ConversationHandler(
@@ -49,9 +73,9 @@ async def main():
             USEFUL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_useful)],
             MISSING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_missing)],
             INTERFACE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_interface)],
-            IMPROVEMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_improvements(update, context, db))],
+            IMPROVEMENTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_improvements(update, context, db))]
         },
-        fallbacks=[CommandHandler("cancel", feedback_cancel)],
+        fallbacks=[CommandHandler("cancel", feedback_cancel)]
     )
 
     app.add_handler(offer_handler)
@@ -59,11 +83,11 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("history", lambda update, context: show_history(update, context, db)))
     app.add_handler(CommandHandler("myprofile", lambda update, context: my_profile(update, context, db)))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
+    app.add_handler(CommandHandler("reset", reset_chat))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message_handler))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
     logging.info("Telegram bot is running...")
-
     await app.run_polling()
 
 if __name__ == "__main__":

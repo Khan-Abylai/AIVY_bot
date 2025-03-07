@@ -17,10 +17,10 @@ RUN pip3 install --no-cache-dir \
     "python-telegram-bot[all]" \
     requests \
     asyncpg-lite \
-    nest_asyncio
+    nest_asyncio \
+    aiohttp
 
 COPY src/ /opt/api/
-
 WORKDIR /opt/api/
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/opt/api/"
