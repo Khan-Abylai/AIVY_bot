@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS "USER_Profile" (
     l_name VARCHAR(255),
     age INT,
     sex VARCHAR(50),
+    marital_status VARCHAR(100),
     job VARCHAR(255),
     city VARCHAR(255),
     goal TEXT,
@@ -74,11 +75,11 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- Вставка тестовых профилей
-INSERT INTO "USER_Profile" (user_id, f_name, l_name, age, sex, job, city, goal, solution)
+INSERT INTO "USER_Profile" (user_id, f_name, l_name, age, sex, marital_status, job, city, goal, solution)
 VALUES
-    (1001, 'Ivan', 'Ivanov', 30, 'male', 'Engineer', 'Moscow', 'Выучить английский', 'Заниматься каждый день'),
-    (1002, 'Maria', 'Petrova', 25, 'female', 'Designer', 'Saint Petersburg', 'Сменить работу', 'Прокачать портфолио'),
-    (1003, 'John', 'Smith', 40, 'male', 'Teacher', 'New York', 'Углубить знания в AI', 'Пройти онлайн-курсы')
+    (1001, 'Ivan', 'Ivanov', 30, 'male', 'женат', 'Engineer', 'Moscow', 'Выучить английский', 'Заниматься каждый день'),
+    (1002, 'Maria', 'Petrova', 25, 'female', 'не замужем', 'Designer', 'Saint Petersburg', 'Сменить работу', 'Прокачать портфолио'),
+    (1003, 'John', 'Smith', 40, 'male', 'в отношениях', 'Teacher', 'New York', 'Углубить знания в AI', 'Пройти онлайн-курсы')
 ON CONFLICT (user_id) DO NOTHING;
 
 -- Вставка тестовой обратной связи

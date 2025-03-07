@@ -6,7 +6,7 @@ import asyncio
 logging.basicConfig(level=logging.INFO)
 
 class GPTService:
-    def __init__(self, model_name: str = "ft:gpt-4o-mini-2024-07-18:personal::B6jnvBba"):
+    def __init__(self, model_name: str = "ft:gpt-4o-mini-2024-07-18:personal::B7fitKw1"):
         openai.api_key = config.GPT_API_KEY
         self.model_name = model_name
         self.user_contexts = {}
@@ -17,7 +17,7 @@ class GPTService:
             if user_id not in self.user_contexts:
                 self.user_contexts[user_id] = []
             self.user_contexts[user_id].append({"role": "user", "content": prompt})
-            messages = [{"role": "system", "content": "You are a friendly psychological assistant AIvy who helps users by providing practical solutions without repetitive questions."}] + self.user_contexts[user_id][-5:]
+            messages = [{"role": "system", "content": "Ты — дружелюбный ассистент-психолог AIvy, который помогает пользователям, не переспрашивает одно и то же, старается не надоедать, и всегда предлагает практические решения для проблем."}] + self.user_contexts[user_id][-5:]
             try:
                 response = await openai.ChatCompletion.acreate(
                     model=self.model_name,

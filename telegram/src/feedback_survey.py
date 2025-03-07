@@ -14,13 +14,13 @@ async def start_feedback_survey(update: Update, context: ContextTypes.DEFAULT_TY
 async def process_rating(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['rating'] = update.message.text
     await update.message.reply_text(
-        "Какие функции AIvy вам наиболее полезны? (Анализ эмоций, поддерживающие фразы, медитации, рефлексивные вопросы, другое)")
+        "Какие функции AIvy оказались для тебя наиболее полезными? (Анализ эмоций, поддерживающие фразы, медитации, рефлексивные вопросы, другое)")
     return USEFUL
 
 
 async def process_useful(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['useful'] = update.message.text
-    await update.message.reply_text("Чего, по вашему мнению, не хватает в AIvy, чтобы она лучше помогала вам?")
+    await update.message.reply_text("Чего, по твоему мнению, не хватает в AIvy, чтобы она лучше помогала тебе?")
     return MISSING
 
 
@@ -33,7 +33,7 @@ async def process_missing(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def process_interface(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['interface'] = update.message.text
-    await update.message.reply_text("Что бы вам хотелось улучшить в AIvy с технической точки зрения?")
+    await update.message.reply_text("Что бы тебе хотелось улучшить в AIvy с технической точки зрения?")
     return IMPROVEMENTS
 
 
@@ -50,7 +50,7 @@ async def process_improvements(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['improvements']
     )
 
-    await update.message.reply_text("Спасибо за обратную связь! Мы ценим ваше мнение.")
+    await update.message.reply_text("Спасибо за обратную связь! Мы ценим твое мнение.")
     return ConversationHandler.END
 
 

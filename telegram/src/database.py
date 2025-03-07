@@ -115,8 +115,9 @@ class Database:
             logging.error(f"Ошибка при получении сообщений: {e}")
             return []
 
-    async def save_user_profile(self, user_id: int, f_name: str, l_name: str, age: str, sex: str, job: str, city: str, goal: str, solution: str):
-        """Сохраняет или обновляет профиль пользователя, включая имя и фамилию."""
+    async def save_user_profile(self, user_id: int, f_name: str, l_name: str, age: str, sex: str, marital_status: str,
+                                job: str, city: str, goal: str, solution: str):
+        """Сохраняет или обновляет профиль пользователя, включая семейное положение."""
         if not self.pool:
             logging.error("Нет подключения к базе данных")
             return
@@ -124,19 +125,20 @@ class Database:
             async with self.pool.acquire() as connection:
                 await connection.execute(
                     """
-                    INSERT INTO "USER_Profile" (user_id, f_name, l_name, age, sex, job, city, goal, solution)
-                    VALUES ($1, $2, $3, $4::int, $5, $6, $7, $8, $9)
+                    INSERT INTO "USER_Profile" (user_id, f_name, l_name, age, sex, marital_status, job, city, goal, solution)
+                    VALUES ($1, $2, $3, $4::int, $5, $6, $7, $8, $9, $10)
                     ON CONFLICT (user_id) DO UPDATE SET 
                         f_name = $2,
                         l_name = $3,
                         age = $4::int,
                         sex = $5,
-                        job = $6,
-                        city = $7,
-                        goal = $8,
-                        solution = $9
+                        marital_status = $6,
+                        job = $7,
+                        city = $8,
+                        goal = $9,
+                        solution = $10
                     """,
-                    user_id, f_name, l_name, int(age), sex, job, city, goal, solution
+                    user_id, f_name, l_name, int(age), sex, marital_status, job, city, goal, solution
                 )
             logging.info(f"Профиль пользователя {user_id} сохранён.")
         except ValueError as ve:

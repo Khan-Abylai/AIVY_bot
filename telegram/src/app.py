@@ -6,16 +6,16 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from database import Database
 import config
 from offer_and_survey import (
-    start_offer, check_consent, process_first_name, process_last_name,
-    process_age, process_sex, process_job, process_city, process_goal, process_solution, cancel,
-    WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, JOB, CITY, GOAL, SOLUTION
+    start_offer, check_consent, process_first_name, # process_last_name,
+    process_age, process_sex, process_marital_status, process_job, process_city, process_goal, process_solution, cancel,
+    WAITING_FOR_CONSENT, FIRST_NAME, LAST_NAME, AGE, SEX, MARITAL_STATUS, JOB, CITY, GOAL, SOLUTION
 )
 from feedback_survey import (
     start_feedback_survey, process_rating, process_useful, process_missing,
     process_interface, process_improvements, cancel as feedback_cancel,
     RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
 )
-from handlers import help_command, show_history, unknown_command, my_profile
+from handlers import process_message, help_command, show_history, unknown_command, my_profile  # Обновлён импорт
 
 nest_asyncio.apply()
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -34,13 +34,6 @@ async def call_gpt_api(prompt: str) -> str:
             logging.error(f"Error calling GPT API: {e}")
             return "Извините, произошла ошибка. Попробуйте снова позже."
 
-async def process_message_handler(update, context):
-    user_id = update.message.chat_id
-    text = update.message.text.strip()
-    logging.info(f"Received message from {user_id}: {text}")
-    response_text = await call_gpt_api(text)
-    await update.message.reply_text(response_text)
-
 async def reset_chat(update, context):
     user_id = update.message.chat_id
     await update.message.reply_text("История диалога очищена.")
@@ -55,9 +48,10 @@ async def main():
         states={
             WAITING_FOR_CONSENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_consent)],
             FIRST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_first_name)],
-            LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_last_name)],
+            # LAST_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_last_name)],
             AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_age)],
             SEX: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_sex)],
+            MARITAL_STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_marital_status)],
             JOB: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_job)],
             CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_city)],
             GOAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_goal)],
@@ -78,14 +72,15 @@ async def main():
         fallbacks=[CommandHandler("cancel", feedback_cancel)]
     )
 
+    # Добавляем обработчики с передачей db
     app.add_handler(offer_handler)
     app.add_handler(feedback_survey_handler)
-    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("help", lambda update, context: help_command(update, context, db)))
     app.add_handler(CommandHandler("history", lambda update, context: show_history(update, context, db)))
     app.add_handler(CommandHandler("myprofile", lambda update, context: my_profile(update, context, db)))
     app.add_handler(CommandHandler("reset", reset_chat))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message_handler))
-    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
+    app.add_handler(MessageHandler(filters.COMMAND, lambda update, context: unknown_command(update, context, db)))
 
     logging.info("Telegram bot is running...")
     await app.run_polling()
