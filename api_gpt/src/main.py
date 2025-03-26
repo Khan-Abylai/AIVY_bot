@@ -3,6 +3,7 @@ import nest_asyncio
 import asyncio
 from fastapi import FastAPI, Request
 from gpt_service import GPTService
+from summary_service import summarize_text
 import config
 
 nest_asyncio.apply()
@@ -19,6 +20,20 @@ async def generate(request: Request):
     response_text = await gpt_service.predict(0, prompt)
     logging.info(f"Generated response: {response_text}")
     return {"response": response_text}
+
+@app.post("/api/summarize")
+async def summarize(request: Request):
+    """
+    Новый эндпоинт: принимает уже подготовленный текст диалога (dialog_text),
+    прогоняет через summarize_text и возвращает результат.
+    """
+    data = await request.json()
+    dialog_text = data.get("dialog_text", "")
+    logging.info("Received text for summarization.")
+    #summary = summarize_text(dialog_text)
+    summary = await asyncio.to_thread(summarize_text, dialog_text)
+    logging.info(f"Generated summary: {summary}")
+    return {"summary": summary}
 
 if __name__ == "__main__":
     import uvicorn

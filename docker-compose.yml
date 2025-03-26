@@ -47,6 +47,7 @@ services:
     volumes:
       - ./secrets/telegram_token:/run/secrets/telegram_token:ro
       - ./secrets/gpt_api_url:/run/secrets/gpt_api_url:ro
+      - ./secrets/summary_api_url:/run/secrets/summary_api_url:ro  # <- new summary_api_url
     networks:
       - backend
 

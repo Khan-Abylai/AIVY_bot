@@ -2,8 +2,10 @@ import logging
 import nest_asyncio
 import asyncio
 import aiohttp
+import datetime
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 from database import Database
+from zoneinfo import ZoneInfo
 import config
 from offer_and_survey import (
     start_offer, check_consent, process_first_name, # process_last_name,
@@ -16,6 +18,7 @@ from feedback_survey import (
     RATING, USEFUL, MISSING, INTERFACE, IMPROVEMENTS
 )
 from handlers import process_message, help_command, show_history, unknown_command, my_profile  # Обновлён импорт
+from summary_utils import process_summary_for_all_users
 
 nest_asyncio.apply()
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -37,6 +40,28 @@ async def call_gpt_api(prompt: str) -> str:
 async def reset_chat(update, context):
     user_id = update.message.chat_id
     await update.message.reply_text("История диалога очищена.")
+
+async def schedule_summaries():
+    """
+    Фоновая задача, которая каждые n минуты генерирует summary для всех пользователей за заданную дату.
+    :param db: Экземпляр класса Database для доступа к базе данных.
+    """
+    await asyncio.sleep(config.summary_start_sleep_time)  # небольшая задержка для старта
+    tz = ZoneInfo("Asia/Almaty")
+    while True:
+        # now = datetime.datetime.now(tz)
+        # next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
+        # if now >= next_run:
+        #     next_run += datetime.timedelta(days=1)
+        # sleep_seconds = (next_run - now).total_seconds()
+        # await asyncio.sleep(sleep_seconds)
+        try:
+            date_to_summarize = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")  # прошлый день
+            #date_to_summarize = datetime.datetime.now().strftime("%Y-%m-%d")  # этот день
+            await process_summary_for_all_users(db, date_to_summarize)
+        except Exception as e:
+            logging.error(f"[schedule_summaries] Ошибка: {e}")
+        await asyncio.sleep(config.summary_update_loop_time)  # повторяем каждые n минуты
 
 async def main():
     logging.info("Starting Telegram bot...")
@@ -81,6 +106,8 @@ async def main():
     app.add_handler(CommandHandler("reset", reset_chat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda update, context: process_message(update, context, db)))
     app.add_handler(MessageHandler(filters.COMMAND, lambda update, context: unknown_command(update, context, db)))
+
+    asyncio.create_task(schedule_summaries())  # Запускаем фоновую задачу
 
     logging.info("Telegram bot is running...")
     await app.run_polling()

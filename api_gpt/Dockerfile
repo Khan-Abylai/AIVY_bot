@@ -21,7 +21,11 @@ RUN pip install --no-cache-dir \
     openai==0.28.0 \
     sentence-transformers \
     qdrant-client \
-    nest_asyncio
+    nest_asyncio \
+    transformers==4.40.2 \
+    torch>=2.1 \
+    sentencepiece
+
 
 COPY src/ /opt/api/
 WORKDIR /opt/api/

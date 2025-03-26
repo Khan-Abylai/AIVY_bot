@@ -15,9 +15,17 @@ else
   echo "GPT API URL не найден!" && exit 1
 fi
 
+if [ -f /run/secrets/summary_api_url ]; then
+  export SUMMARY_API_URL=$(cat /run/secrets/summary_api_url)
+  echo "SUMMARY API URL загружен: $SUMMARY_API_URL"
+else
+  echo "SUMMARY API URL не найден!" && exit 1
+fi
+
 echo "Проверка переменных окружения:"
 echo "TELEGRAM_TOKEN: $TELEGRAM_TOKEN"
 echo "GPT_API_URL: $GPT_API_URL"
+echo "SUMMARY_API_URL: $SUMMARY_API_URL"
 
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8

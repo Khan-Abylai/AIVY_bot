@@ -1,6 +1,7 @@
 import asyncpg
 import asyncio
 import logging
+import datetime
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
 class Database:
@@ -219,3 +220,87 @@ class Database:
         except Exception as e:
             logging.error(f"Ошибка при получении профиля пользователя: {e}")
             return None
+
+    # Новые методы для работы с Conversation и summary
+
+    async def get_all_dialogue_ids_for_date(self, date: str):
+        """
+        Возвращает список всех dialogue_id, в которых были сообщения за указанную дату.
+        Преобразует входную строку в объект даты и использует DISTINCT для выборки.
+
+        :param date: Дата в формате 'YYYY-MM-DD'.
+        :return: Список dialogue_id (целых чисел) или пустой список, если нет сообщений.
+        """
+        try:
+            date_obj = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+        except Exception as e:
+            logging.error(f"Ошибка преобразования даты в get_all_dialogue_ids_for_date: {e}")
+            return []
+        query = """
+            SELECT DISTINCT dialogue_id
+            FROM "Message"
+            WHERE date_trunc('day', response_time) = date_trunc('day', $1::date)
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, date_obj)
+                dialogue_ids = [row["dialogue_id"] for row in rows]
+                #logging.info(f"Найдено {len(dialogue_ids)} диалогов для даты {date_obj}")
+                return dialogue_ids
+        except Exception as e:
+            logging.error(f"Ошибка get_all_dialogue_ids_for_date: {e}")
+            return []
+
+    async def get_messages_for_dialogue_for_date(self, dialogue_id: int, date: str):
+        """
+        Возвращает список сообщений для заданного dialogue_id за указанную дату.
+        Преобразует входную строку в объект даты.
+
+        :param dialogue_id: Идентификатор диалога.
+        :param date: Дата в формате 'YYYY-MM-DD'.
+        :return: Список словарей с полями 'role' и 'response'. Если сообщений нет, возвращается пустой список.
+        """
+        try:
+            date_obj = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+        except Exception as e:
+            logging.error(f"Ошибка преобразования даты в get_messages_for_dialogue_for_date: {e}")
+            return []
+        query = """
+            SELECT role, response
+            FROM "Message"
+            WHERE dialogue_id = $1
+              AND date_trunc('day', response_time) = date_trunc('day', $2::date)
+            ORDER BY response_time ASC
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, dialogue_id, date_obj)
+                #logging.info(f"Найдено {len(rows)} сообщений для диалога {dialogue_id} за {date_obj}")
+                return [{"role": r["role"], "response": r["response"]} for r in rows]
+        except Exception as e:
+            logging.error(f"Ошибка get_messages_for_dialogue_for_date: {e}")
+            return []
+
+    async def upsert_conversation_summary(self, dialogue_id: int, summary: str):
+        """
+        Сохраняет (или обновляет) summary в таблице "Conversation" для указанного dialogue_id.
+        Возвращает dialogue_id.
+        """
+        if not self.pool:
+            logging.error("Нет подключения к базе данных")
+            return None
+        query = """
+            INSERT INTO "Conversation"(dialogue_id, summary)
+            VALUES ($1, $2)
+            ON CONFLICT (dialogue_id) 
+            DO UPDATE SET summary = EXCLUDED.summary
+            RETURNING dialogue_id
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(query, dialogue_id, summary)
+                return row["dialogue_id"]
+        except Exception as e:
+            logging.error(f"Ошибка upsert_conversation_summary: {e}")
+            return None
+
