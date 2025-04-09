@@ -58,7 +58,6 @@ services:
     environment:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
-      # GPT_API_KEY укажите, если нужно
     volumes:
       - ./secrets/gpt_api_key:/run/secrets/gpt_api_key:ro
     ports:
