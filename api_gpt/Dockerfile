@@ -21,7 +21,10 @@ RUN pip install --no-cache-dir \
     uvicorn \
     python-multipart \
     requests \
-    openai
+    openai \
+    transformers>=4.0.0 \
+    torch>=1.13.0 \
+    huggingface_hub[hf_xet]
 
 ADD src/ /opt/api/
 WORKDIR /opt/api/
