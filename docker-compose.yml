@@ -1,5 +1,8 @@
+version: '3.8'
+
 networks:
   backend:
+
 services:
   api_gpt:
     hostname: gpt_api
@@ -11,11 +14,14 @@ services:
     restart: always
     ports:
       - "9001:9001"
+    volumes:
+      - ./data:/opt/api/data
     logging:
       options:
         max-size: 50m
     networks:
       - backend
+
   telegram:
     hostname: bot
     container_name: bot

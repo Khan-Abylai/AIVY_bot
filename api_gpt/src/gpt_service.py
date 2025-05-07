@@ -1,6 +1,6 @@
-# gpt_service.py
 import logging
-from openai import AsyncOpenAI        # ← асинхронный клиент
+from typing import Optional, List, Dict, Any
+from openai import AsyncOpenAI
 import config
 
 logger = logging.getLogger(__name__)
@@ -11,66 +11,62 @@ logger.addHandler(handler)
 
 
 class GPTService:
-    def __init__(self, default_model: str | None = None):
+    def __init__(self, default_model: Optional[str] = None) -> None:
         self.client = AsyncOpenAI(api_key=config.GPT_API_KEY)
         self.default_model = default_model or config.ANALYZER_MODEL
 
     async def predict(
         self,
         *,
-        model_name: str | None = None,
-        messages: list | None = None,
-        prompt: str | None = None,
-        temperature: float | None = None,
-        presence_penalty: float | None = None,
-        frequency_penalty: float | None = None,
-        top_p: float | None = None,
-        max_tokens: int | None = None,
+        model_name: Optional[str] = None,
+        messages: Optional[List[Dict[str, str]]] = None,
+        prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> str:
         model = model_name or self.default_model
-        params = {
+
+        if not messages and not prompt:
+            logger.warning("Neither messages nor prompt were provided")
+            return "Invalid input: no messages or prompt provided."
+
+        generation_params: Dict[str, Any] = {
             "model": model,
-            "temperature": temperature or config.GEN_PARAMS["temperature"],
-            "presence_penalty": presence_penalty or config.GEN_PARAMS["presence_penalty"],
-            "frequency_penalty": frequency_penalty or config.GEN_PARAMS["frequency_penalty"],
-            "top_p": top_p or config.GEN_PARAMS["top_p"],
-            "max_tokens": max_tokens or config.GEN_PARAMS["max_tokens"],
-            "messages": messages
-            if messages
-            else [
+            "temperature": temperature or config.GEN_PARAMS.get("temperature", 0.7),
+            "presence_penalty": presence_penalty or config.GEN_PARAMS.get("presence_penalty", 0.0),
+            "frequency_penalty": frequency_penalty or config.GEN_PARAMS.get("frequency_penalty", 0.0),
+            "top_p": top_p or config.GEN_PARAMS.get("top_p", 1.0),
+            "max_tokens": max_tokens or config.GEN_PARAMS.get("max_tokens", 512),
+            "messages": messages or [
                 {"role": "system", "content": config.ANALYZER_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": prompt or ""},
             ],
         }
 
-        snippet = params["messages"][-1]["content"][:100]
-        logger.info("[Запрос OpenAI] модель=%s, фрагмент=%r", model, snippet)
-
-        # Moderation API
         try:
-            mod = await self.client.moderations.create(input=snippet)
-            if mod.results[0].flagged:
-                logger.warning("Модерация отклонила ввод")
-                return (
-                    "Извините, я не могу обсудить эту тему. "
-                    "Обратитесь, пожалуйста, к специалисту."
-                )
-        except Exception as e:
-            logger.error("Сбой Moderation API: %s — продолжаю без фильтра", e)
+            filtered = [m for m in generation_params["messages"] if m["role"] in {"user", "assistant"}]
+            log_str = "\n".join(f"{m['role']}: {m['content']}" for m in filtered)
+            logger.info("[OpenAI History] %d messages\n%s", len(filtered), log_str)
+        except Exception as log_err:
+            logger.warning("Failed to log filtered messages: %s", log_err)
 
-        # Chat completion
         try:
-            resp = await self.client.chat.completions.create(**params)
-            text = resp.choices[0].message.content.strip()
-            usage = getattr(resp, "usage", None)
+            response = await self.client.chat.completions.create(**generation_params)
+            message = response.choices[0].message.content.strip()
+
+            usage = getattr(response, "usage", None)
             if usage:
                 logger.info(
-                    "[Токены] prompt=%d, completion=%d, total=%d",
+                    "[Token Usage] prompt=%d | completion=%d | total=%d",
                     usage.prompt_tokens,
                     usage.completion_tokens,
                     usage.total_tokens,
                 )
-            return text
-        except Exception:
-            logger.exception("Запрос OpenAI завершился ошибкой")
-            return "К сожалению, при генерации ответа произошла ошибка. Попробуйте позже."
+
+            return message
+        except Exception as e:
+            logger.exception("OpenAI completion failed: %s", e)
+            return "An error occurred while generating a response. Please try again later."
