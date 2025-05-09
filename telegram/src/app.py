@@ -1,11 +1,17 @@
 import logging
+from datetime import datetime
 import requests
 from telegram import Update
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters, CallbackContext
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    CallbackContext
 )
 import config
 
+# Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -31,9 +37,20 @@ async def help_command(update: Update, context: CallbackContext):
 async def process_message(update: Update, context: CallbackContext):
     """Обрабатывает текстовые сообщения и отправляет их в GPT API"""
     user_text = update.message.text
+    user_id = update.effective_user.id
+    # session_id, обновляемое раз в сутки
+    today = datetime.utcnow().date().isoformat()
+    session_id = f"{user_id}-{today}"
+
+    payload = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "user_input": user_text
+    }
 
     try:
-        response = requests.post(config.GPT_API_URL, data={"prompt": user_text})
+        # Отправляем JSON-пэйлоуд в GPT API
+        response = requests.post(config.GPT_API_URL, json=payload)
         response.raise_for_status()
 
         answer = response.json().get("response", "Ошибка: пустой ответ от API")
