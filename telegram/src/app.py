@@ -25,14 +25,28 @@ async def start(update: Update, context: CallbackContext):
     )
 
 async def help_command(update: Update, context: CallbackContext):
-    """Выводит список команд"""
     help_text = (
         "*Как пользоваться:*\n"
         "- Отправьте любое сообщение, и я обработаю его через GPT API.\n"
         "- Доступные команды:\n"
         "   • /help — показать это сообщение\n"
+        "   • /clear — очистить историю текущей сессии (за сегодня)\n"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def clear_session(update: Update, context: CallbackContext):
+    """Очищает историю текущей сессии пользователя (за сегодня)."""
+    user_id = update.effective_user.id
+    today = datetime.utcnow().date().isoformat()
+    session_id = f"{user_id}-{today}"
+    try:
+        resp = requests.post(config.CLEAR_API_URL, json={"session_id": session_id})
+        resp.raise_for_status()
+        await update.message.reply_text("История текущей сессии очищена.")
+    except requests.RequestException as e:
+        logging.error(f"Ошибка очистки сессии {session_id}: {e}")
+        await update.message.reply_text("Не удалось очистить историю сессии. Попробуйте позже.")
+
 
 async def process_message(update: Update, context: CallbackContext):
     """Обрабатывает текстовые сообщения и отправляет их в GPT API"""
@@ -70,6 +84,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("clear", clear_session))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
