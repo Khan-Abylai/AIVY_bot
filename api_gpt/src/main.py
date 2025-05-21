@@ -1,7 +1,5 @@
 from __future__ import annotations
-
-import uuid
-import logging
+import logging, asyncio
 from typing import Optional, List, Dict
 from datetime import datetime
 
@@ -9,170 +7,189 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 import tiktoken
 
-import config
+import config                                 # ANALYZER_MODEL = "ft:…"
 from gpt_service import GPTService
 from memory_service import MemoryService
 
-# Constants
-TOKEN_LIMIT = 128000
-RESERVED_TOKENS = 1000
+# ───── constants
+RESERVED_TOKENS = 800
 HISTORY_SUMMARY_THRESHOLD = 40
-CHUNK_TOKEN_LIMIT = 2000
+CHUNK_TOKEN_LIMIT = 1_500
 
-# Logging
+# ───── logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("aivy_api")
 
-# Services
-app = FastAPI(title="AIVY-GPT with Persistent Context", version="1.2")
-service = GPTService()
+# ───── services
+app = FastAPI(title="AIVY-GPT with Persistent Context", version="1.3")
+service = GPTService()          # .default_model хранит ID дефолтной модели
 memory = MemoryService()
 
-# Helpers
-async def parse_request(request: Request) -> Dict[str, Optional[str]]:
-    """
-    Извлекает из запроса поля user_id, session_id и user_input (или prompt).
-    Поддерживает JSON и form-data.
-    """
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        data = await request.json()
-        return {
-            "user_id":   data.get("user_id"),
-            "session_id": data.get("session_id"),
-            "user_input": data.get("user_input"),
-        }
-    else:
-        form = await request.form()
-        return {
-            "user_id":   form.get("user_id"),
-            "session_id": form.get("session_id"),
-            "user_input": form.get("prompt") or form.get("user_input"),
-        }
+# ───── helpers
+def get_tokenizer(model: str):
+    try:
+        return tiktoken.encoding_for_model(model)
+    except KeyError:
+        return tiktoken.get_encoding("cl100k_base")
 
-def split_text_into_chunks(text: str, max_tokens: int, model: str) -> List[str]:
+def model_ctx_limit(model: str) -> int:
+    if model.endswith("16k"):
+        return 16_384
+    if model.startswith("gpt-4") or "4o" in model:
+        return 128_000
+    return 4_096
+
+def trim_history_to_fit(sys_prompt: str,
+                        history: List[Dict[str,str]],
+                        tok,
+                        model: str) -> List[Dict[str,str]]:
+    """Удаляет самые старые сообщения, пока не впишемся в окно модели."""
+    cap = model_ctx_limit(model)
+    while True:
+        msgs = [{"role": "system", "content": sys_prompt}] + \
+               [m for m in history if m["role"] != "system_summary"]
+        total = sum(len(tok.encode(m["content"])) for m in msgs)
+        if total + RESERVED_TOKENS <= cap:
+            return msgs
+
+        # если summary уже есть  → удаляем старейший non-summary
+        if any(m["role"] == "system_summary" for m in history):
+            for i, m in enumerate(history):
+                if m["role"] != "system_summary":
+                    history.pop(i)
+                    break
+        else:
+            # summary ещё нет → создаём «заглушку»
+            history.insert(0,
+                {"role": "system_summary", "content": "Краткая сводка предыдущего диалога."})
+
+async def parse_request(req: Request) -> Dict[str, Optional[str]]:
+    if req.headers.get("content-type", "").startswith("application/json"):
+        data = await req.json()
+    else:
+        data = await req.form()
+    return {
+        "user_id":   data.get("user_id"),
+        "session_id": data.get("session_id"),
+        "user_input": data.get("user_input") or data.get("prompt"),
+    }
+
+def split_text_into_chunks(text: str, limit: int, model: str) -> List[str]:
     """Разбивает длинный текст на чанки по числу токенов."""
-    tokenizer = tiktoken.encoding_for_model(model)
-    tokens = tokenizer.encode(text)
-    return [
-        tokenizer.decode(tokens[i:i + max_tokens])
-        for i in range(0, len(tokens), max_tokens)
-    ]
+    tok = get_tokenizer(model)
+    ids = tok.encode(text)
+    chunks = [tok.decode(ids[i:i + limit]) for i in range(0, len(ids), limit)]
+    logger.debug(" -- split-chunks=%d", len(chunks))
+    return chunks
+
+async def safe_predict(*, model_name: str, messages: list,
+                       max_tokens=512, temperature=0.2, retries=4) -> str:
+    delay = 5
+    for attempt in range(retries):
+        try:
+            return await service.predict(model_name=model_name,
+                                         messages=messages,
+                                         max_tokens=max_tokens,
+                                         temperature=temperature)
+        except Exception as e:
+            if "insufficient_quota" in str(e).lower() or attempt == retries-1:
+                raise
+            logger.warning("Retry after %s  (%d/%d)", e, attempt+1, retries)
+            await asyncio.sleep(delay)
+            delay = min(delay*2, 60)
 
 async def summarize_history_if_needed(session_id: str):
-    """
-    Если история для session_id слишком длинная, суммирует старую часть,
-    оставляя недавние сообщения для контекста.
-    """
-    history = memory.get_history(session_id)
-    if len(history) <= HISTORY_SUMMARY_THRESHOLD:
+    hist = memory.get_history(session_id)
+    if len(hist) <= HISTORY_SUMMARY_THRESHOLD:
+        return
+    tok = get_tokenizer(service.default_model)
+    total = sum(len(tok.encode(m["content"])) for m in hist)
+    if total < model_ctx_limit(service.default_model)*0.6:
         return
 
-    # Берём всё кроме последних HISTORY_SUMMARY_THRESHOLD сообщений
-    to_summarize = history[:-HISTORY_SUMMARY_THRESHOLD]
     prompt = "Сформулируй кратко содержание предыдущего диалога:\n"
-    for msg in to_summarize:
-        prompt += f"{msg['role']}: {msg['content']}\n"
+    for m in hist[:-HISTORY_SUMMARY_THRESHOLD]:
+        prompt += f"{m['role']}: {m['content']}\n"
 
-    summary = await service.predict(
-        model_name=config.ANALYZER_MODEL,
-        messages=[{"role": "user", "content": prompt}]
-    )
+    summary = await safe_predict(model_name=config.ANALYZER_MODEL,
+                                 messages=[{"role": "user", "content": prompt}],
+                                 max_tokens=256)
 
     # Очищаем историю и добавляем сводку, затем восстанавливаем последние сообщения
     memory.clear_history(session_id)
     memory.append_message(session_id, "system_summary", summary)
-    for msg in history[-HISTORY_SUMMARY_THRESHOLD:]:
-        memory.append_message(session_id, msg["role"], msg["content"])
+    for m in hist[-HISTORY_SUMMARY_THRESHOLD:]:
+        memory.append_message(session_id, m["role"], m["content"])
 
-# Endpoints
+# ───── endpoints
 @app.post("/api/generate")
 async def generate_chat(request: Request):
-    # Парсим входные данные
-    parsed     = await parse_request(request)
-    user_id    = parsed.get("user_id")
-    body_sess  = parsed.get("session_id")
-    user_input = (parsed.get("user_input") or "").strip()
-
+    p = await parse_request(request)
+    user_input = (p["user_input"] or "").strip()
     if not user_input:
-        raise HTTPException(status_code=422, detail="Поле 'user_input' или 'prompt' не предоставлено.")
+        raise HTTPException(422, "Поле 'user_input' / 'prompt' не предоставлено")
 
-    # Формируем session_id: если есть user_id — привязываем по дате, иначе — из тела/куки/host
-    cookie_sess = request.cookies.get("session_id")
-    if user_id is not None:
-        # Обновляется раз в сутки
-        today = datetime.utcnow().date().isoformat()
-        session_id = f"{user_id}-{today}"
+    cookie_sid = request.cookies.get("session_id")
+    if p["user_id"]:
+        session_id = f"{p['user_id']}-{datetime.utcnow().date()}"
     else:
-        session_id = body_sess or cookie_sess or request.client.host
+        session_id = p["session_id"] or cookie_sid or request.client.host
 
     logger.info("Session %s | Input len %d", session_id, len(user_input))
 
     # При необходимости делаем суммирование истории
     await summarize_history_if_needed(session_id)
 
-    # Разбиваем пользовательский ввод на чанки
-    chunks: List[str] = split_text_into_chunks(user_input, CHUNK_TOKEN_LIMIT, service.default_model)
-    responses: List[str] = []
+    chunks  = split_text_into_chunks(user_input, CHUNK_TOKEN_LIMIT,
+                                     service.default_model)
+    replies : list[str] = []
 
     for chunk in chunks:
         # Сохраняем вопрос пользователя
         memory.append_message(session_id, "user", chunk)
         history = memory.get_history(session_id)
 
-        # Строим системный prompt
+        # system prompt
         system_prompt = config.ANALYZER_SYSTEM_PROMPT
-        # Если есть сводка — включаем её
-        for msg in history:
-            if msg["role"] == "system_summary":
-                system_prompt += f"\n\nСводка: {msg['content']}"
+        if (s := next((m for m in history if m["role"]=="system_summary"), None)):
+            system_prompt += f"\n\nСводка: {s['content']}"
+
+        # имя пользователя
+        for m in history:
+            if m["role"]=="user" and m["content"].lower().startswith("меня зовут"):
+                name = m["content"].split()[-1].strip(".,!?\"")
+                system_prompt += f"\n\nИмя пользователя: {name}."
                 break
 
-        # Автоматически выделяем имя пользователя, если было сказано "меня зовут ..."
-        user_name: Optional[str] = None
-        for msg in history:
-            if msg["role"] == "user" and msg["content"].lower().startswith("меня зовут"):
-                parts = msg["content"].split()
-                if len(parts) >= 3:
-                    user_name = parts[-1].strip(".,!?\"")
-                break
-        if user_name:
-            system_prompt += f"\n\nИмя пользователя: {user_name}. Обращайся по имени."
+        tok = get_tokenizer(service.default_model)
+        messages = trim_history_to_fit(system_prompt, history, tok,
+                                       service.default_model)
 
-        # Собираем сообщения для API
-        messages = [{"role": "system", "content": system_prompt}]
-        messages += [
-            {"role": m["role"], "content": m["content"]}
-            for m in history if m["role"] != "system_summary"
-        ]
+        logger.debug("messages=%d  tokens=%d",
+                     len(messages),
+                     sum(len(tok.encode(m["content"])) for m in messages))
+        print(f" - messages: {messages}")
 
-        # Проверяем общий размер токенов
-        tokenizer = tiktoken.encoding_for_model(service.default_model)
-        total_tokens = sum(len(tokenizer.encode(m["content"])) for m in messages)
-        if total_tokens + RESERVED_TOKENS > TOKEN_LIMIT:
-            raise HTTPException(status_code=413, detail="Контекст слишком длинный. Начните новую сессию.")
-
-        # Запрос в модель
-        reply = await service.predict(model_name=config.ANALYZER_MODEL, messages=messages)
+        reply = await safe_predict(model_name=config.ANALYZER_MODEL,
+                                   messages=messages,
+                                   max_tokens=512)  # 256
         memory.append_message(session_id, "assistant", reply)
-        responses.append(reply)
+        replies.append(reply)
 
-    full_response = "\n".join(responses)
+    print(f" - replies: {replies}")
+    full = "\n".join(replies)
+    logger.debug("response: %s", full[:120])
 
-    # Возвращаем ответ и ставим куку с session_id
-    result = {"session_id": session_id, "response": full_response}
-    resp = JSONResponse(content=result)
-    resp.set_cookie(key="session_id", value=session_id, httponly=True)
+    res = {"session_id": session_id, "response": full}
+    resp = JSONResponse(res)
+    resp.set_cookie("session_id", session_id, httponly=True)
     return resp
 
 @app.post("/api/clear")
 async def clear_history(request: Request):
-    """
-    Очищает историю по переданному session_id.
-    """
     data = await request.json()
-    session_id = data.get("session_id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id не предоставлен.")
-    memory.clear_history(session_id)
-    return {"session_id": session_id, "message": "История очищена."}
+    sid = data.get("session_id")
+    if not sid:
+        raise HTTPException(400, "session_id не предоставлен")
+    memory.clear_history(sid)
+    return {"session_id": sid, "message": "История очищена."}

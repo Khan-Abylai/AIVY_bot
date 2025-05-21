@@ -20,7 +20,7 @@ logging.basicConfig(
 async def start(update: Update, context: CallbackContext):
     """Приветственное сообщение при старте бота"""
     await update.message.reply_text(
-        "Привет! Я бот на базе GPT.\n"
+        "Привет! Aivy, эмоциональный AI-компаньон.\n"
         "Просто отправьте мне сообщение, и я отвечу на него!"
     )
 
