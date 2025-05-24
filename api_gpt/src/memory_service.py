@@ -1,5 +1,5 @@
-import os
-import sqlite3
+# memory_service.py
+import os, sqlite3
 from typing import List, Dict
 
 class MemoryService:
@@ -8,10 +8,12 @@ class MemoryService:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         # подключаемся к SQLite (файл создаётся автоматически)
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._create_table()
+        self._create_tables()
 
-    def _create_table(self):
+    # ────────── NEW ──────────
+    def _create_tables(self):
         with self.conn:
+            # история сообщений
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS memory (
@@ -22,6 +24,13 @@ class MemoryService:
                 )
                 """
             )
+            # текущий модуль (0|2)
+            self.conn.execute("""
+              CREATE TABLE IF NOT EXISTS session_meta (
+                session_id TEXT PRIMARY KEY,
+                module     INTEGER
+              );
+            """)
 
     def get_history(self, session_id: str) -> List[Dict[str, str]]:
         cur = self.conn.cursor()
@@ -44,7 +53,20 @@ class MemoryService:
 
     def clear_history(self, session_id: str):
         with self.conn:
-            self.conn.execute(
-                "DELETE FROM memory WHERE session_id=?",
-                (session_id,)
-            )
+            self.conn.execute("DELETE FROM memory WHERE session_id=?", (session_id,))
+            self.conn.execute("DELETE FROM session_meta WHERE session_id=?", (session_id,))
+
+    # ---------- NEW: модуль ----------
+    def get_module(self, session_id) -> int:
+        cur = self.conn.cursor()
+        cur.execute("SELECT module FROM session_meta WHERE session_id=?", (session_id,))
+        row = cur.fetchone()
+        return row[0] if row else 0                # 0 по-умолчанию
+
+    def set_module(self, session_id, module: int):
+        with self.conn:
+            self.conn.execute("""
+              INSERT INTO session_meta(session_id,module)
+              VALUES(?,?)
+              ON CONFLICT(session_id) DO UPDATE SET module=excluded.module
+            """, (session_id, module))

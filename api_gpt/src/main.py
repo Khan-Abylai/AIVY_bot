@@ -26,6 +26,17 @@ service = GPTService()          # .default_model хранит ID дефолтн�
 memory = MemoryService()
 
 # ───── helpers
+def get_prompt_model(session_id: str):
+    """
+    Возвращает (system_prompt, model_id) в зависимости от активного модуля
+    0 – вход, 2 – «разобраться».
+    """
+    module = memory.get_module(session_id)          # <= добавлено
+    print(" ---------- module", module, module == 2)
+    if module == 2:
+        return config.ANALYZER_SYSTEM_PROMPT_M2, config.ANALYZER_MODEL_M2
+    return config.ANALYZER_SYSTEM_PROMPT,          config.ANALYZER_MODEL
+
 def get_tokenizer(model: str):
     try:
         return tiktoken.encoding_for_model(model)
@@ -150,7 +161,9 @@ async def generate_chat(request: Request):
         history = memory.get_history(session_id)
 
         # system prompt
-        system_prompt = config.ANALYZER_SYSTEM_PROMPT
+        #system_prompt = config.ANALYZER_SYSTEM_PROMPT
+        # prompt + модель по номеру модуля
+        system_prompt, model_id = get_prompt_model(session_id)
         if (s := next((m for m in history if m["role"]=="system_summary"), None)):
             system_prompt += f"\n\nСводка: {s['content']}"
 
@@ -170,9 +183,35 @@ async def generate_chat(request: Request):
                      sum(len(tok.encode(m["content"])) for m in messages))
         print(f" - messages: {messages}")
 
-        reply = await safe_predict(model_name=config.ANALYZER_MODEL,
+        # reply = await safe_predict(model_name=config.ANALYZER_MODEL,
+        #                            messages=messages,
+        #                            max_tokens=512)  # 256
+        reply = await safe_predict(model_name=model_id,
                                    messages=messages,
                                    max_tokens=512)  # 256
+
+        if reply.strip().lower().startswith("переход") and "модул" in reply.lower():
+            logger.info("Session %s → switch to Module-2", session_id)
+
+            memory.set_module(session_id, 2)  # фиксируем модуль
+            # заново берём prompt + модель для М2
+            system_prompt, model_id = get_prompt_model(session_id)
+            history = memory.get_history(session_id)
+
+            tok = get_tokenizer(service.default_model)
+            messages = trim_history_to_fit(system_prompt, history, tok, service.default_model)
+            messages.append({
+                            "role": "system",
+                            "content": ANALYZER_SYSTEM_TRANSITION_M2
+                            })
+
+            print(f" - new messages: {messages}")
+
+            reply = await safe_predict(model_name=model_id,
+                                       messages=messages,
+                                       max_tokens=512)  # 256
+            print(" - reply", reply)
+
         memory.append_message(session_id, "assistant", reply)
         replies.append(reply)
 
