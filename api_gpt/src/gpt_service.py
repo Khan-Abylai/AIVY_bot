@@ -27,7 +27,9 @@ class GPTService:
         top_p: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        model = self.default_model or model_name
+        #model = self.default_model or model_name
+        model = model_name or self.default_model
+        print(" ====---==== ", model)
 
         # Проверяем, что хотя бы prompt или messages переданы
         if not messages and not prompt:
