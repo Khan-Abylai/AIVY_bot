@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+requests
+openai
+tiktoken
+python-dotenv
+httpx
+
+transformers>=4.0.0
+torch>=1.13.0
+huggingface_hub[hf_xet]
+
+python-telegram-bot[all]

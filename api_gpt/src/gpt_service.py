@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import Optional, List, Dict, Any
 from openai import AsyncOpenAI
 import config
@@ -13,7 +14,7 @@ logger.addHandler(handler)
 class GPTService:
     def __init__(self, default_model: Optional[str] = None) -> None:
         self.client = AsyncOpenAI(api_key=config.GPT_API_KEY)
-        self.default_model = config.ANALYZER_MODEL
+        self.default_model = default_model or config.ANALYZER_MODEL
 
     async def predict(
         self,
@@ -27,19 +28,13 @@ class GPTService:
         top_p: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        #model = self.default_model or model_name
         model = model_name or self.default_model
-        print(" ====---==== ", model)
 
-        # Проверяем, что хотя бы prompt или messages переданы
         if not messages and not prompt:
             logger.warning("Neither messages nor prompt were provided")
             return "Invalid input: no messages or prompt provided."
-
-        # Гарантируем, что prompt — строка
         prompt = prompt or ""
 
-        # Составляем параметры генерации
         generation_params: Dict[str, Any] = {
             "model": model,
             "temperature": temperature if temperature is not None else config.GEN_PARAMS.get("temperature", 0.7),
@@ -53,20 +48,10 @@ class GPTService:
             ],
         }
 
-        # Логирование пользовательских сообщений
-        try:
-            filtered = [m for m in generation_params["messages"] if m["role"] in {"user", "assistant"}]
-            log_str = "\n".join(f"{m['role']}: {m['content']}" for m in filtered)
-            logger.info("[OpenAI History] %d messages\n%s", len(filtered), log_str)
-        except Exception as log_err:
-            logger.warning("Failed to log filtered messages: %s", log_err)
-
-        # Запрос к OpenAI
         try:
             response = await self.client.chat.completions.create(**generation_params)
             message = response.choices[0].message.content.strip()
 
-            # Логирование токенов
             usage = getattr(response, "usage", None)
             if usage:
                 logger.info(
@@ -80,3 +65,30 @@ class GPTService:
         except Exception as e:
             logger.exception("OpenAI completion failed: %s", e)
             return "An error occurred while generating a response. Please try again later."
+
+    async def retry_predict(
+        self,
+        *,
+        model_name: Optional[str],
+        messages: List[Dict[str, str]],
+        max_tokens: int = 512,
+        temperature: float = 0.25,
+        attempts: int = 4,
+    ) -> str:
+        delay = 5
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self.predict(
+                    model_name=model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            except Exception as exc:
+                if "insufficient_quota" in str(exc).lower() or attempt == attempts:
+                    logger.exception("GPT retry failed on attempt %d: %s", attempt, exc)
+                    raise
+                logger.warning("GPT retry %d/%d: %s", attempt, attempts, exc)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+        return None

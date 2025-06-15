@@ -14,16 +14,12 @@ from fastapi.responses import JSONResponse
 import config
 from gpt_service import GPTService
 from memory_service import MemoryService
+from utils import (
+    tokenizer, ctx_limit, make_session_id, get_payload, is_similar,
+    active_prompt_and_model, trim_history, split_into_chunks,
+)
 
-# ───── settings ───────────────────────────────────────────
-RESERVED_TOKENS            = 300
-HISTORY_SUMMARY_THRESHOLD  = 40
-CHUNK_TOKEN_LIMIT          = 1_500
-DUPLICATE_THRESHOLD        = 0.9     # similarity ratio
-DUPLICATE_MAX_REPEATS      = 1       # сколько раз подряд допускаем дубль
-TEMP_M0, TEMP_M2           = 0.2, 0.25
-TEMP_DUPLICATE             = 0.45
-
+# ───── logging setup ──────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -35,117 +31,63 @@ app     = FastAPI(title="AIVY-GPT API", version="1.5")
 service = GPTService()
 memory  = MemoryService()
 
-# ───── util: токенизатор + лимит окна ─────────────────────
-def tokenizer(model: str):
-    try:
-        return tiktoken.encoding_for_model(model)
-    except KeyError:
-        return tiktoken.get_encoding("cl100k_base")
 
-def ctx_limit(model: str) -> int:
-    if model.endswith("16k"):                   return 16_384
-    if model.startswith(("gpt-4", "gpt-4o")):   return 128_000
-    return 4_096
+async def manage_history(
+    session_id: str,
+    model: str,
+    *,
+    max_messages: int = config.HISTORY_SUMMARY_THRESHOLD,
+    summarize_count: int = config.SUMMARIZE_COUNT_MESSAGE,
+    max_ctx_ratio: float = config.MAX_CTX_RATIO,
+) -> None:
+    tok      = tokenizer(model)
+    limit    = ctx_limit(model)
+    history  = memory.get_history(session_id)
 
-# ───── util: выбор prompt / model по модулю ───────────────
-def active_prompt_and_model(session_id: str) -> tuple[str, str]:
-    module = memory.get_module(session_id)
-    return (
-        config.ANALYZER_SYSTEM_PROMPT_M2, config.ANALYZER_MODEL_M2
-    ) if module == 2 else (
-        config.ANALYZER_SYSTEM_PROMPT,    config.ANALYZER_MODEL
+    total_msgs = len(history)
+    total_toks = sum(len(tok.encode(m["content"])) for m in history)
+
+    if total_msgs <= summarize_count:
+        return
+    if total_msgs <= max_messages and total_toks <= limit * max_ctx_ratio:
+        return
+
+    num_to_summarize = max(1, total_msgs - summarize_count)
+    chunk = history[:num_to_summarize]
+
+    prev_summary = next(
+        (m for m in history if m["role"] == "system" and m["content"].startswith("[summary]")),
+        None
     )
 
-# ───── util: trim history (one-pass) ──────────────────────
-def trim_history(system_prompt: str,
-                 history: List[Dict[str, str]],
-                 tok,
-                 model: str) -> List[Dict[str, str]]:
-    cap    = ctx_limit(model) - RESERVED_TOKENS
-    budget = cap - len(tok.encode(system_prompt))
-    kept: List[dict] = []
+    prompt_lines: List[str] = []
+    if prev_summary:
+        prompt_lines.append(f"{prev_summary['role']}: {prev_summary['content']}")
+    prompt_lines += [f"{m['role']}: {m['content']}" for m in chunk]
+    prompt = (
+        "Суммируй диалог старых сообщени ниже в 5-15 предложениях "
+        "учитывая предыдущую сводку(если есть), без потери ключевых фактов (имена, даты, решения, результат):\n\n"
+        + "\n".join(prompt_lines)
+    )
 
-    for msg in reversed(history):
-        if msg["role"] == "system_summary":
-            continue
-        cost = len(tok.encode(msg["content"]))
-        if cost > budget:
-            break
-        kept.append(msg)
-        budget -= cost
-
-    kept.reverse()
-    return [{"role": "system", "content": system_prompt}, *kept]
-
-# ───── util: чанки длинного текста ────────────────────────
-def split_into_chunks(text: str, limit: int, model: str):
-    tok = tokenizer(model)
-    ids = tok.encode(text)
-    for i in range(0, len(ids), limit):
-        yield tok.decode(ids[i:i + limit])
-
-# ───── util: retry wrapper для GPT ────────────────────────
-async def retry_predict(*, model: str, messages: list,
-                        max_tokens=256, temperature=0.25,
-                        attempts=4) -> str:
-    delay = 5
-    for attempt in range(1, attempts + 1):
-        try:
-            return await service.predict(
-                model_name=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        except Exception as exc:
-            if "insufficient_quota" in str(exc).lower() or attempt == attempts:
-                raise
-            logger.warning("GPT retry %d/%d: %s", attempt, attempts, exc)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 60)
-
-# ───── util: duplicate detection ──────────────────────────
-def _normalize(txt: str) -> str:
-    txt = re.sub(r"[^\w\s]", "", txt.lower())
-    return re.sub(r"\s+", " ", txt).strip()
-
-def is_similar(a: str, b: str, thr=DUPLICATE_THRESHOLD) -> bool:
-    return difflib.SequenceMatcher(None, _normalize(a), _normalize(b)).ratio() > thr
-
-# ───── optional summary long history ──────────────────────
-async def maybe_summarize(session_id: str):
-    hist = memory.get_history(session_id)
-    if len(hist) <= HISTORY_SUMMARY_THRESHOLD:
-        return
-    tok  = tokenizer(service.default_model)
-    if sum(len(tok.encode(m["content"])) for m in hist) < ctx_limit(service.default_model) * 0.6:
-        return
-
-    prompt = "Кратко сформулируй содержание диалога:\n" + \
-             "\n".join(f"{m['role']}: {m['content']}" for m in hist[:-HISTORY_SUMMARY_THRESHOLD])
-
-    summary = await retry_predict(
-        model=config.ANALYZER_MODEL,
+    summary = await service.retry_predict(
+        model_name=config.ANALYZER_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=256
+        temperature=0.2,
     )
 
-    # Очищаем историю и добавляем сводку, затем восстанавливаем последние сообщения
-    memory.clear_history(session_id)
-    memory.append_message(session_id, "system_summary", summary)
-    for m in hist[-HISTORY_SUMMARY_THRESHOLD:]:
-        memory.append_message(session_id, m["role"], m["content"])
+    new_history = [{"role": "assistant", "content": f"[summary]\n{summary}"}]
+    new_history.extend(history[num_to_summarize:])
 
-# ───── util: session id helper ────────────────────────────
-def make_session_id(user_id: Optional[str], cookie_sid: Optional[str], host: str) -> str:
-    return f"{user_id}-{datetime.utcnow().date()}" if user_id else (cookie_sid or host)
+    memory.rewrite_history(session_id, new_history)
+    logger.info(
+        "Session %s: compressed last %d msgs into summary (tokens %d→%d)",
+        session_id,
+        num_to_summarize,
+        total_toks,
+        len(tok.encode(summary)),
+    )
 
-async def get_payload(req: Request):
-    if req.headers.get("content-type", "").startswith("application/json"):
-        return await req.json()
-    return await req.form()
-
-# ───── FastAPI endpoints ─────────────────────────────────
 @app.post("/api/generate")
 async def generate_chat(request: Request):
     payload = await get_payload(request)
@@ -158,24 +100,27 @@ async def generate_chat(request: Request):
         payload.get("session_id") or request.cookies.get("session_id"),
         request.client.host,
     )
-    logger.info("Session %s | len=%d", session_id, len(user_input))
 
-    await maybe_summarize(session_id)
+    logger.info("New request: session=%s | payload=%s", session_id, payload)
 
-    repeat_count = 0  # подряд идущие дубли
+    repeat_count = 0
+    replies: List[str] = []
 
-    replies: list[str] = []
-    for chunk in split_into_chunks(user_input, CHUNK_TOKEN_LIMIT, service.default_model):
+    await manage_history(
+        session_id,
+        model=service.default_model
+    )
+
+    for chunk in split_into_chunks(user_input, config.CHUNK_TOKEN_LIMIT, service.default_model):
         memory.append_message(session_id, "user", chunk)
 
-        sys_prompt, model = active_prompt_and_model(session_id)
+        sys_prompt, model = active_prompt_and_model(memory.get_module(session_id))
 
         history   = memory.get_history(session_id)
         summary   = next((m for m in history if m["role"] == "system_summary"), None)
         if summary:
             sys_prompt += f"\n\nСводка: {summary['content']}"
 
-        # «меня зовут …»
         for m in history:
             if m["role"] == "user" and m["content"].lower().startswith("меня зовут"):
                 name = m["content"].split()[-1].strip(".,!?\"")
@@ -184,38 +129,41 @@ async def generate_chat(request: Request):
 
         tok      = tokenizer(model)
         messages = trim_history(sys_prompt, history, tok, model)
-        logger.debug("messages=%d", len(messages))
+        logger.debug("Trimmed message count: %d", len(messages))
 
-        temp = TEMP_M0 if memory.get_module(session_id) == 0 else TEMP_M2
-        reply = await retry_predict(model=model,
-                                    messages=messages,
-                                    max_tokens=256,
-                                    temperature=temp)
+        temp = config.TEMP_M0 if memory.get_module(session_id) == 0 else config.TEMP_M2
+        reply = await service.retry_predict(
+            model_name=model,
+            messages=messages,
+            temperature=temp
+        )
+        logger.info("GPT Response: session=%s | model=%s - %sm | reply=%s", session_id, model, memory.get_module(session_id), reply)
 
-        # --- duplicate guard ---------------------------------
+        # duplicate guard...
         last_assist = next((m for m in reversed(history) if m["role"] == "assistant"), None)
         if last_assist and is_similar(reply, last_assist["content"]):
             repeat_count += 1
-            logger.debug("Duplicate %d for session %s", repeat_count, session_id)
-            if repeat_count >= DUPLICATE_MAX_REPEATS:
-                reply = await retry_predict(model=model,
-                                            messages=messages,
-                                            max_tokens=256,
-                                            temperature=TEMP_DUPLICATE)
+            if repeat_count >= config.DUPLICATE_MAX_REPEATS:
+                reply = await service.retry_predict(
+                    model_name=model,
+                    messages=messages,
+                    temperature=config.TEMP_DUPLICATE
+                )
                 repeat_count = 0
         else:
             repeat_count = 0
-        # ------------------------------------------------------
 
         if reply.lower().startswith("переход") and "модул" in reply.lower():
             logger.info("Session %s → switch to Module-2", session_id)
             memory.set_module(session_id, 2)
-            sys_prompt, model = active_prompt_and_model(session_id)
+            sys_prompt, model = active_prompt_and_model(memory.get_module(session_id))
             messages = trim_history(sys_prompt, memory.get_history(session_id), tok, model)
-            reply = await retry_predict(model=model,
-                                        messages=messages,
-                                        max_tokens=256,
-                                        temperature=TEMP_M2)
+            reply = await service.retry_predict(
+                model_name=model,
+                messages=messages,
+                temperature=config.TEMP_M2
+            )
+            logger.info("GPT Response after module switch: session=%s | model=%s | reply=%s", session_id, model, reply)
 
         memory.append_message(session_id, "assistant", reply)
         replies.append(reply)
@@ -233,4 +181,5 @@ async def clear_history(request: Request):
     if not sid:
         raise HTTPException(400, "session_id не предоставлен")
     memory.clear_history(sid)
+    logger.info("Cleared history for session %s", sid)
     return {"session_id": sid, "message": "История очищена"}

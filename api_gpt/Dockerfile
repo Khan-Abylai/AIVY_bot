@@ -42,6 +42,7 @@ RUN pip install --no-cache-dir \
 
 # Копируем исходники
 COPY src/ /opt/api/
+COPY prompts/ /opt/api/prompts
 
 # Создаём директорию для хранения памяти и задаём права
 RUN mkdir -p /opt/api/data \
