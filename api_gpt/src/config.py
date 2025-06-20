@@ -26,7 +26,7 @@ GEN_PARAMS = {
 }
 
 ANALYZER_MODEL = "ft:gpt-4o-mini-2024-07-18:personal:aivy-pro-m1:BgaEwUob"
-ANALYZER_MODEL_M2 = "ft:gpt-4o-mini-2024-07-18:personal:aivy-pro:Ba3Rra7J" # "gpt-4o"
+ANALYZER_MODEL_M2 = "gpt-4o" # "ft:gpt-4o-mini-2024-07-18:personal:aivy-pro:Ba3Rra7J"
 
 PROMPTS_DIR = Path("/opt/api/prompts")
 
